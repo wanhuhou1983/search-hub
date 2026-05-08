@@ -3,13 +3,25 @@ iCloud Drive 搜索 - 通过 pyicloud SDK
 """
 
 import os
+import socket
 import requests
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
 from config import ICLOUD_ACCOUNT, ICLOUD_PASSWORD, MAX_RESULTS_PER_SOURCE
 
 # pyicloud 依赖 getpass.getuser()，sandbox 环境可能取不到用户名
 # 确保 USERNAME 环境变量可用，同时指定 cookie 目录避免权限问题
 _ICLOUD_COOKIE_DIR = str(Path.home() / ".workbuddy" / "icloud_cookies")
+
+
+def _run_with_timeout(func, timeout=15):
+    """在线程中运行函数，超时自动中断"""
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(func)
+        try:
+            return future.result(timeout=timeout)
+        except TimeoutError:
+            return None, "iCloud 连接超时，请检查网络"
 
 
 def _get_api(timeout: int):
@@ -22,21 +34,21 @@ def _get_api(timeout: int):
     if not ICLOUD_ACCOUNT or not ICLOUD_PASSWORD:
         return None, "iCloud 账号或密码未配置"
 
+    # 设置 socket 全局超时（防止 hang 住）
+    old_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(timeout)
+
     try:
-        # 在 sandbox 环境下 getpass.getuser() 可能取不到用户名
-        # 强制设置环境变量，同时指定 cookie 目录
         os.environ.setdefault("USERNAME", "linhu")
         os.environ.setdefault("USER", "linhu")
         api = PyiCloudService(
             ICLOUD_ACCOUNT, ICLOUD_PASSWORD,
             cookie_directory=_ICLOUD_COOKIE_DIR,
-            authenticate=False,
         )
-        api.authenticate()
+
         if api.requires_2fa:
             return None, "iCloud 需要两步验证，请在浏览器登录 Apple ID 后重新授权"
-        # 验证 Drive 可访问
-        _ = api.drive  # 触发 drive 初始化，验证权限
+
         return api, None
     except requests.exceptions.ConnectionError:
         return None, "iCloud 服务不可达（网络连接失败），请检查网络"
@@ -47,6 +59,8 @@ def _get_api(timeout: int):
         if "Authentication required" in emsg:
             return None, "iCloud 认证失败，请检查密码或网络连接"
         return None, f"iCloud 登录失败: {emsg[:200]}"
+    finally:
+        socket.setdefaulttimeout(old_timeout)
 
 
 def _walk_dir(node, path: str = "", max_results: int = 100) -> list:
@@ -94,14 +108,36 @@ def search(q: str, timeout: int = 30):
     if err:
         return {"source": "icloud", "error": err, "results": []}
 
+    # 搜索阶段也加 socket 超时
+    old_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(timeout)
     try:
         drive = api.drive
         q_lower = q.lower()
         results = []
 
-        try:
-            search_results = drive.search(q)
-            for item in search_results:
+        def _do_search():
+            try:
+                sr = drive.search(q)
+                return list(sr)
+            except (AttributeError, TypeError):
+                return None
+
+        search_items = _run_with_timeout(_do_search, timeout)
+        if isinstance(search_items, tuple) and search_items[0] is None:
+            return {"source": "icloud", "error": "iCloud 搜索超时", "results": []}
+
+        if search_items is None:
+            # search 方法不可用，回退到递归遍历
+            all_items = _run_with_timeout(
+                lambda: _walk_dir(drive, max_results=MAX_RESULTS_PER_SOURCE),
+                timeout,
+            )
+            if isinstance(all_items, tuple) and all_items[0] is None:
+                return {"source": "icloud", "error": "iCloud 遍历超时", "results": []}
+            results = [r for r in (all_items or []) if q_lower in r["name"].lower()]
+        else:
+            for item in search_items:
                 name = item.name if hasattr(item, "name") else str(item)
                 is_dir = item.type == "folder" if hasattr(item, "type") else False
                 size = item.size if hasattr(item, "size") else 0
@@ -116,9 +152,6 @@ def search(q: str, timeout: int = 30):
                 })
                 if len(results) >= MAX_RESULTS_PER_SOURCE:
                     break
-        except (AttributeError, TypeError):
-            results = _walk_dir(drive, max_results=MAX_RESULTS_PER_SOURCE)
-            results = [r for r in results if q_lower in r["name"].lower()]
 
         return {"source": "icloud", "results": results, "total": len(results)}
 
@@ -126,3 +159,5 @@ def search(q: str, timeout: int = 30):
         return {"source": "icloud", "error": "iCloud 服务不可达", "results": []}
     except Exception as e:
         return {"source": "icloud", "error": str(e)[:200], "results": []}
+    finally:
+        socket.setdefaulttimeout(old_timeout)

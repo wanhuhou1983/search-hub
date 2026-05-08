@@ -630,8 +630,15 @@ async function doSearch() {
 
     const elapsed = data.elapsed || 0;
     const total = data.total || 0;
+    const res = data.results || {};
 
-    if (total === 0) {
+    // 检查是否有源返回了错误
+    const errors = Object.entries(res)
+      .filter(([, g]) => g.error)
+      .map(([k, g]) => `${(SOURCE_NAMES[k] || {}).name || k}: ${g.error}`);
+    const hasError = errors.length > 0;
+
+    if (total === 0 && !hasError) {
       status.innerHTML = `<span class="warn">😕 未找到匹配结果（${elapsed}s）</span>`;
       empty.style.display = 'block';
       empty.querySelector('h2').textContent = '没有找到结果';
@@ -640,7 +647,12 @@ async function doSearch() {
       return;
     }
 
-    status.innerHTML = `✅ 共找到 ${total} 条结果（${elapsed}秒）`;
+    if (total === 0 && hasError) {
+      status.innerHTML = `<span class="error">⚠️ 搜索完成，${errors.length} 个源返回错误（${elapsed}s）</span>`;
+      empty.style.display = 'none';
+    } else {
+      status.innerHTML = `✅ 共找到 ${total} 条结果（${elapsed}秒）`;
+    }
 
     // 渲染结果
     resultsDiv.className = 'results visible';
