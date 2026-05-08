@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>统一搜索中心</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --card: #16213e;
+    --card-hover: #1f3050;
+    --text: #e0e0e0;
+    --text-dim: #8892b0;
+    --accent: #64ffda;
+    --accent-dim: #45b7a0;
+    --border: #233554;
+    --search-bg: #0f3460;
+    --err: #ff6b6b;
+    --warn: #ffd93d;
+    --scrollbar: #233554;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+  }
+
+  /* 滚动条 */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 3px; }
+
+  .container {
+    max-width: 1000px;
+    margin: 0 auto;
+    padding: 40px 20px 80px;
+  }
+
+  /* 标题 */
+  .header {
+    text-align: center;
+    margin-bottom: 32px;
+  }
+  .header h1 {
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: 2px;
+    background: linear-gradient(135deg, var(--accent), #7c5cff);
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .header p {
+    color: var(--text-dim);
+    font-size: 13px;
+    margin-top: 6px;
+  }
+
+  /* 搜索框 */
+  .search-box {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .search-box input {
+    flex: 1;
+    padding: 14px 20px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--search-bg);
+    color: var(--text);
+    font-size: 16px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .search-box input:focus {
+    border-color: var(--accent);
+  }
+  .search-box input::placeholder { color: var(--text-dim); }
+  .search-btn {
+    padding: 14px 28px;
+    border: none;
+    border-radius: 12px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-dim));
+    color: #0a0a23;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  .search-btn:hover { opacity: 0.85; }
+  .search-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* 数据源切换 */
+  .sources-bar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 24px;
+  }
+  .source-btn {
+    padding: 6px 14px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .source-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .source-btn.active {
+    background: var(--accent);
+    color: #0a0a23;
+    border-color: var(--accent);
+    font-weight: 500;
+  }
+
+  /* 状态 */
+  .status-bar {
+    text-align: center;
+    padding: 12px;
+    color: var(--text-dim);
+    font-size: 14px;
+    min-height: 44px;
+  }
+  .status-bar .error { color: var(--err); }
+  .status-bar .warn { color: var(--warn); }
+  .status-bar .loading { color: var(--accent); }
+
+  /* 结果区域 */
+  .results { display: none; }
+  .results.visible { display: block; }
+
+  .source-group {
+    margin-bottom: 20px;
+    background: var(--card);
+    border-radius: 12px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+  }
+  .source-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    user-select: none;
+  }
+  .source-header:hover { background: var(--card-hover); }
+  .source-header .name {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .source-header .badge {
+    background: var(--accent);
+    color: #0a0a23;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .source-header .error-badge {
+    background: var(--err);
+    color: #fff;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .source-error {
+    padding: 16px 18px;
+    color: var(--err);
+    font-size: 13px;
+  }
+
+  .item-list { display: none; }
+  .item-list.open { display: block; }
+
+  .result-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 18px;
+    gap: 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    transition: background 0.15s;
+  }
+  .result-item:last-child { border-bottom: none; }
+  .result-item:hover { background: var(--card-hover); }
+
+  .result-icon {
+    width: 20px;
+    text-align: center;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+  .result-info {
+    flex: 1;
+    min-width: 0;
+  }
+  .result-name {
+    font-size: 14px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .result-meta {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .result-size {
+    font-size: 11px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+    width: 70px;
+    text-align: right;
+  }
+  .result-action {
+    flex-shrink: 0;
+  }
+  .result-action a {
+    padding: 4px 10px;
+    border-radius: 6px;
+    background: var(--search-bg);
+    color: var(--text);
+    text-decoration: none;
+    font-size: 11px;
+    transition: background 0.15s;
+  }
+  .result-action a:hover { background: var(--accent); color: #0a0a23; }
+
+  .source-tip {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 13px;
+  }
+
+  /* 空状态 */
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-dim);
+  }
+  .empty-state .emoji { font-size: 48px; margin-bottom: 16px; }
+  .empty-state h2 { font-size: 18px; font-weight: 400; margin-bottom: 8px; }
+
+  /* Tab 切换 */
+  .tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 20px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0;
+  }
+  .tab-btn {
+    padding: 10px 20px;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-size: 14px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.2s;
+  }
+  .tab-btn:hover { color: var(--text); }
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+    font-weight: 500;
+  }
+  .tab-content { display: none; }
+  .tab-content.active { display: block; }
+
+  /* MissAV 下载区 */
+  .missav-box {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+  }
+  .missav-box input {
+    width: 100%;
+    padding: 12px 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--search-bg);
+    color: var(--text);
+    font-size: 14px;
+    outline: none;
+    box-sizing: border-box;
+  }
+  .missav-box input:focus { border-color: var(--accent); }
+  .missav-box .btn {
+    padding: 10px 24px;
+    border: none;
+    border-radius: 8px;
+    background: linear-gradient(135deg, var(--accent), var(--accent-dim));
+    color: #0a0a23;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  .missav-box .btn:hover { opacity: 0.85; }
+  .missav-box .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .missav-info {
+    margin-top: 16px;
+    padding: 16px;
+    background: var(--search-bg);
+    border-radius: 8px;
+    line-height: 1.6;
+  }
+  .missav-info .title { font-size: 15px; font-weight: 500; }
+  .missav-info .meta { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+  /* 视频站点选择按钮 */
+  .vsite-panel { animation: fadeIn .2s ease; }
+  .source-btn[data-vsite] { font-size: 14px; padding: 6px 16px; }
+  .quality-btns {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .quality-btn {
+    padding: 8px 18px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .quality-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .quality-btn.active { background: var(--accent); color: #0a0a23; border-color: var(--accent); font-weight: 500; }
+  .quality-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  @media (max-width: 640px) {
+    .container { padding: 20px 12px; }
+    .search-box { flex-direction: column; }
+    .search-btn { width: 100%; }
+    .result-item { flex-wrap: wrap; }
+    .result-size { width: auto; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <div class="header">
+    <h1>🔍 统一搜索中心</h1>
+    <p>搜索 · 网盘 · 视频下载</p>
+  </div>
+
+  <!-- Tab 切换 -->
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('search')">🔎 搜索</button>
+    <button class="tab-btn" onclick="switchTab('videodl')">🎬 视频下载</button>
+  </div>
+
+  <!-- ====== 搜索 Tab ====== -->
+  <div class="tab-content active" id="tab-search">
+
+  <!-- 搜索框 -->
+  <div class="search-box">
+    <input type="text" id="searchInput" placeholder="输入关键词搜索..." autofocus
+           onkeydown="if(event.key==='Enter') doSearch()">
+    <button class="search-btn" id="searchBtn" onclick="doSearch()">搜 索</button>
+  </div>
+
+  <!-- 数据源切换 -->
+  <div class="sources-bar" id="sourcesBar">
+    <button class="source-btn active" data-key="all" onclick="toggleSource(this, 'all')">🌐 全部</button>
+  </div>
+
+  <!-- 状态 -->
+  <div class="status-bar" id="statusBar"></div>
+
+  <!-- 结果 -->
+  <div class="results" id="results"></div>
+
+  <!-- 空状态 -->
+  <div class="empty-state" id="emptyState">
+    <div class="emoji">🔎</div>
+    <h2>搜索所有文件，就在一处</h2>
+    <p>输入关键词，回车搜索本地、网盘和知识库</p>
+  </div>
+
+</div><!-- /tab-search -->
+
+<!-- ====== 视频下载 Tab ====== -->
+<div class="tab-content" id="tab-videodl">
+
+  <!-- 站点切换 -->
+  <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+    <button class="source-btn active" data-vsite="missav" onclick="switchVideoSite('missav', this)" style="font-size:14px;padding:6px 16px">🎬 MissAV</button>
+    <button class="source-btn" data-vsite="xvideos" onclick="switchVideoSite('xvideos', this)" style="font-size:14px;padding:6px 16px">🔞 XVideos</button>
+    <button class="source-btn" data-vsite="pornhub" onclick="switchVideoSite('pornhub', this)" style="font-size:14px;padding:6px 16px">🔞 PornHub</button>
+  </div>
+
+  <!-- ====== MissAV 子面板 ====== -->
+  <div class="vsite-panel" id="vsite-missav">
+    <div class="missav-box">
+      <div style="display:flex;gap:12px;margin-bottom:16px">
+        <input type="text" id="missavKeyword" placeholder="输入关键词搜索（如 sone-815）"
+               onkeydown="if(event.key==='Enter') missavSearch()">
+        <button class="btn" id="missavSearchBtn" onclick="missavSearch()">搜索</button>
+      </div>
+      <div id="missavResult"></div>
+      <div id="missavDetail" style="display:none;margin-top:16px;border-top:1px solid var(--border);padding-top:16px"></div>
+      <div id="missavLog" style="margin-top:12px;font-size:12px;color:var(--text-dim);white-space:pre-wrap"></div>
+    </div>
+  </div>
+
+  <!-- ====== XVideos 子面板 ====== -->
+  <div class="vsite-panel" id="vsite-xvideos" style="display:none">
+    <div class="missav-box">
+      <div style="display:flex;gap:12px;margin-bottom:16px">
+        <input type="text" id="xvideosUrl" placeholder="输入 xvideos.com 视频链接" value="https://www.xvideos.com/"
+               onkeydown="if(event.key==='Enter') xvideosParse()" style="flex:1">
+        <button class="btn" id="xvideosParseBtn" onclick="xvideosParse()">解析</button>
+      </div>
+      <div id="xvideosInfo" style="display:none;margin-bottom:12px;padding:12px;background:var(--card-bg);border-radius:6px">
+        <div id="xvideosTitle" style="font-size:14px;font-weight:500"></div>
+        <button class="btn" id="xvideosDlBtn" onclick="xvideosDownload()" style="margin-top:10px">⬇ 下载视频</button>
+      </div>
+      <div id="xvideosLog" style="margin-top:12px;font-size:12px;color:var(--text-dim);white-space:pre-wrap"></div>
+    </div>
+  </div>
+
+  <!-- ====== PornHub 子面板 ====== -->
+  <div class="vsite-panel" id="vsite-pornhub" style="display:none">
+    <div class="missav-box">
+      <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+        <input type="text" id="pornhubUrl" placeholder="输入 pornhub.com 视频链接" value="https://www.pornhub.com/"
+               onkeydown="if(event.key==='Enter') pornhubParse()" style="flex:1;min-width:200px">
+        <select id="pornhubQuality" style="padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--card-bg);color:var(--text)">
+          <option value="1080p">1080p</option>
+          <option value="720p" selected>720p</option>
+          <option value="480p">480p</option>
+          <option value="240p">240p</option>
+        </select>
+        <button class="btn" id="pornhubParseBtn" onclick="pornhubParse()">解析</button>
+      </div>
+      <div id="pornhubInfo" style="display:none;margin-bottom:12px;padding:12px;background:var(--card-bg);border-radius:6px">
+        <div id="pornhubTitle" style="font-size:14px;font-weight:500"></div>
+        <div id="pornhubMeta" style="font-size:12px;color:var(--text-dim);margin-top:4px"></div>
+        <button class="btn" id="pornhubDlBtn" onclick="pornhubDownload()" style="margin-top:10px">⬇ 下载视频</button>
+      </div>
+      <div id="pornhubLog" style="margin-top:12px;font-size:12px;color:var(--text-dim);white-space:pre-wrap"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ========== 状态 ==========
+let activeSources = new Set(['all']);
+const SOURCE_NAMES = {
+  local:  { name: '本地文件', icon: '💻' },
+  obsidian: { name: 'Obsidian', icon: '📝' },
+  baidu:  { name: '百度网盘', icon: '☁️' },
+  p115:   { name: '115网盘', icon: '☁️' },
+  quark:  { name: '夸克网盘', icon: '☁️' },
+  zlib:   { name: 'Z-Library', icon: '📚' },
+};
+
+const SOURCE_ICONS = {
+  file: '📄', folder: '📁', book: '📚',
+  obsidian_note: '📝', zlib_result: '🔗',
+  default: '📄',
+};
+
+function formatSize(bytes) {
+  if (!bytes) return '';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0;
+  let size = Number(bytes);
+  while (size >= 1024 && i < units.length - 1) {
+    size /= 1024;
+    i++;
+  }
+  return size.toFixed(1) + ' ' + units[i];
+}
+
+// ========== 数据源切换 ==========
+async function loadSources() {
+  try {
+    const r = await fetch('/api/sources');
+    const data = await r.json();
+    const bar = document.getElementById('sourcesBar');
+    for (const s of data.sources) {
+      const info = SOURCE_NAMES[s.key];
+      const btn = document.createElement('button');
+      btn.className = 'source-btn';
+      btn.dataset.key = s.key;
+      btn.textContent = `${info.icon || ''} ${s.name}`;
+      btn.onclick = () => toggleSource(btn, s.key);
+      bar.appendChild(btn);
+    }
+  } catch(e) {}
+}
+loadSources();
+
+function toggleSource(btn, key) {
+  // 如果只保留一个并且已经激活，不让取消
+  if (activeSources.has(key) && activeSources.size === 1 && key !== 'all') return;
+
+  if (key === 'all') {
+    // 点击"全部"时，只激活全部，其他取消
+    activeSources.clear();
+    activeSources.add('all');
+    document.querySelectorAll('.source-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    return;
+  }
+
+  // 取消"全部"
+  activeSources.delete('all');
+  document.querySelector('[data-key="all"]').classList.remove('active');
+
+  if (activeSources.has(key)) {
+    activeSources.delete(key);
+    btn.classList.remove('active');
+  } else {
+    activeSources.add(key);
+    btn.classList.add('active');
+  }
+
+  // 如果没有选中的，默认"全部"
+  if (activeSources.size === 0) {
+    activeSources.add('all');
+    document.querySelector('[data-key="all"]').classList.add('active');
+  }
+}
+
+// ========== 搜索 ==========
+async function doSearch() {
+  const q = document.getElementById('searchInput').value.trim();
+  if (!q) return;
+
+  const btn = document.getElementById('searchBtn');
+  const status = document.getElementById('statusBar');
+  const resultsDiv = document.getElementById('results');
+  const empty = document.getElementById('emptyState');
+
+  btn.disabled = true;
+  status.innerHTML = '<span class="loading">⏳ 搜索中...</span>';
+  resultsDiv.className = 'results';
+  resultsDiv.innerHTML = '';
+  empty.style.display = 'none';
+
+  // 构建 sources 参数
+  let sources = 'all';
+  if (!activeSources.has('all')) {
+    sources = [...activeSources].join(',');
+  }
+
+  try {
+    const r = await fetch(`/api/search?q=${encodeURIComponent(q)}&sources=${sources}`);
+    const data = await r.json();
+
+    const elapsed = data.elapsed || 0;
+    const total = data.total || 0;
+
+    if (total === 0) {
+      status.innerHTML = `<span class="warn">😕 未找到匹配结果（${elapsed}s）</span>`;
+      empty.style.display = 'block';
+      empty.querySelector('h2').textContent = '没有找到结果';
+      empty.querySelector('p').textContent = `关键词「${q}」在所选数据源中无匹配`;
+      btn.disabled = false;
+      return;
+    }
+
+    status.innerHTML = `✅ 共找到 ${total} 条结果（${elapsed}秒）`;
+
+    // 渲染结果
+    resultsDiv.className = 'results visible';
+    const res = data.results || {};
+
+    for (const [key, group] of Object.entries(res)) {
+      const info = SOURCE_NAMES[key] || { name: key, icon: '🔧' };
+      const items = group.results || [];
+      const error = group.error;
+      const sourceTotal = group.total || items.length;
+
+      const groupDiv = document.createElement('div');
+      groupDiv.className = 'source-group';
+
+      // 头部
+      const header = document.createElement('div');
+      header.className = 'source-header';
+      header.onclick = () => {
+        const list = header.nextElementSibling;
+        list.classList.toggle('open');
+      };
+      header.innerHTML = `
+        <div class="name">
+          ${info.icon || ''}
+          ${info.name}
+          <span class="${error ? 'error-badge' : 'badge'}">${sourceTotal}</span>
+        </div>
+        <span style="color:var(--text-dim);font-size:11px;">${error ? '⚠️' : '▼'}</span>
+      `;
+      groupDiv.appendChild(header);
+
+      if (error) {
+        const errDiv = document.createElement('div');
+        errDiv.className = 'source-error';
+        errDiv.textContent = `⚠️ ${error}`;
+        groupDiv.appendChild(errDiv);
+      }
+
+      if (items.length === 0 && !error) {
+        const tip = document.createElement('div');
+        tip.className = 'source-tip';
+        tip.textContent = '无匹配结果';
+        groupDiv.appendChild(tip);
+      }
+
+      // 条目列表
+      const list = document.createElement('div');
+      list.className = 'item-list open';
+      for (const item of items) {
+        const el = document.createElement('div');
+        el.className = 'result-item';
+
+        const iconType = item.type || 'default';
+        const emoji = SOURCE_ICONS[iconType] || SOURCE_ICONS.default;
+
+        const size = formatSize(item.size);
+        const metaParts = [];
+        if (item.path) metaParts.push(item.path);
+        if (item.author) metaParts.push(item.author);
+        if (item.vault) metaParts.push(`📁 ${item.vault}`);
+        const meta = metaParts.join(' · ');
+
+        const actionHtml = (() => {
+          if (key === 'local' || key === 'obsidian') {
+            const path = item.path || '';
+            return `<a href="#" onclick="event.stopPropagation(); openFileOrDir('${path.replace(/'/g, "\\'")}'); return false;">📂 打开路径</a>`;
+          }
+          if ((key === 'baidu' || key === 'p115' || key === 'quark') && !item.is_dir && item.id) {
+            return `<a href="#" onclick="event.stopPropagation(); downloadFile('${key}', '${item.id}', '${item.name.replace(/'/g, "\\'")}'); return false;">⬇ 下载</a>`;
+          }
+          return '';
+        })();
+
+        el.innerHTML = `
+          <div class="result-icon">${emoji}</div>
+          <div class="result-info">
+            <div class="result-name">${item.name || '?'}</div>
+            <div class="result-meta">${meta}</div>
+          </div>
+          <div class="result-size">${size}</div>
+          <div class="result-action">${actionHtml}</div>
+        `;
+        list.appendChild(el);
+      }
+      groupDiv.appendChild(list);
+      resultsDiv.appendChild(groupDiv);
+    }
+
+  } catch (e) {
+    status.innerHTML = `<span class="error">❌ 搜索失败：${e.message}</span>`;
+  }
+
+  btn.disabled = false;
+}
+
+// ========== 下载功能 ==========
+async function downloadFile(source, id, name) {
+  const status = document.getElementById('statusBar');
+  status.innerHTML = `<span class="loading">⏳ 获取下载链接...</span>`;
+  try {
+    const r = await fetch(`/api/download?source=${source}&id=${encodeURIComponent(id)}`);
+    const data = await r.json();
+    if (data.error) {
+      status.innerHTML = `<span class="error">❌ 下载失败: ${data.error}</span>`;
+      return;
+    }
+    if (data.tip) {
+      status.innerHTML = `<span class="warn">⚠️ ${data.tip}</span>`;
+    } else {
+      status.innerHTML = `⬇ 正在下载: ${name}`;
+    }
+    window.open(data.url, '_blank');
+  } catch (e) {
+    status.innerHTML = `<span class="error">❌ 下载失败: ${e.message}</span>`;
+  }
+}
+
+// ========== 打开本地文件路径 ==========
+async function openFileOrDir(path) {
+  const status = document.getElementById('statusBar');
+  status.innerHTML = `<span class="loading">⏳ 正在打开路径...</span>`;
+  try {
+    const r = await fetch(`/api/open-path?path=${encodeURIComponent(path)}`);
+    const data = await r.json();
+    if (data.success) {
+      status.innerHTML = `📂 ${data.path}`;
+    } else {
+      status.innerHTML = `<span class="error">❌ ${data.error}</span>`;
+    }
+  } catch (e) {
+    status.innerHTML = `<span class="error">❌ 打开失败: ${e.message}</span>`;
+  }
+}
+
+// ========== Tab 切换 ==========
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  const tabBtn = document.querySelector(`.tab-btn[onclick*="${name}"]`);
+  if (tabBtn) tabBtn.classList.add('active');
+  const tab = document.getElementById(`tab-${name}`);
+  if (tab) tab.classList.add('active');
+}
+
+// ========== 视频站点子面板切换 ==========
+function switchVideoSite(name, btn) {
+  document.querySelectorAll('.source-btn[data-vsite]').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  document.querySelectorAll('.vsite-panel').forEach(p => p.style.display = 'none');
+  const panel = document.getElementById(`vsite-${name}`);
+  if (panel) panel.style.display = 'block';
+}
+
+// ========== XVideos 解析 + 下载 ==========
+
+let _xvideosUrl = '';
+
+async function xvideosParse() {
+  const url = document.getElementById('xvideosUrl').value.trim();
+  if (!url || !url.includes('xvideos.com')) {
+    alert('请输入有效的 xvideos.com 链接');
+    return;
+  }
+  _xvideosUrl = url;
+  const infoDiv = document.getElementById('xvideosInfo');
+  const logDiv = document.getElementById('xvideosLog');
+  const btn = document.getElementById('xvideosParseBtn');
+
+  btn.disabled = true;
+  infoDiv.style.display = 'none';
+  logDiv.textContent = '⏳ 解析中...';
+
+  try {
+    const r = await fetch(`/api/xvideos/parse?url=${encodeURIComponent(url)}`);
+    const data = await r.json();
+    if (data.error) {
+      logDiv.textContent = `❌ ${data.error}`;
+      btn.disabled = false;
+      return;
+    }
+    document.getElementById('xvideosTitle').textContent = `🎬 ${data.title}`;
+    infoDiv.style.display = 'block';
+    logDiv.textContent = `✅ 解析成功！HLS: ${data.hls_url.substring(0, 60)}...`;
+  } catch (e) {
+    logDiv.textContent = `❌ 解析失败: ${e.message}`;
+  }
+  btn.disabled = false;
+}
+
+async function xvideosDownload() {
+  if (!_xvideosUrl) return;
+  const logDiv = document.getElementById('xvideosLog');
+  const btn = document.getElementById('xvideosDlBtn');
+
+  btn.disabled = true;
+  logDiv.textContent = '⏳ 下载中... 请耐心等待\n';
+
+  try {
+    const r = await fetch('/api/xvideos/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: _xvideosUrl }),
+    });
+    const data = await r.json();
+    if (data.success) {
+      logDiv.textContent += `\n✅ 下载完成!\n文件: ${data.file}\n大小: ${data.size_mb} MB`;
+    } else {
+      logDiv.textContent += `\n❌ 失败: ${data.error}`;
+    }
+  } catch (e) {
+    logDiv.textContent += `\n❌ 错误: ${e.message}`;
+  }
+  btn.disabled = false;
+}
+
+// ========== PornHub 解析 + 下载 ==========
+
+let _pornhubUrl = '';
+
+async function pornhubParse() {
+  const url = document.getElementById('pornhubUrl').value.trim();
+  if (!url || !url.includes('pornhub.com')) {
+    alert('请输入有效的 pornhub.com 链接');
+    return;
+  }
+  _pornhubUrl = url;
+  const infoDiv = document.getElementById('pornhubInfo');
+  const logDiv = document.getElementById('pornhubLog');
+  const btn = document.getElementById('pornhubParseBtn');
+
+  btn.disabled = true;
+  infoDiv.style.display = 'none';
+  logDiv.textContent = '⏳ 解析中...';
+
+  try {
+    const r = await fetch(`/api/pornhub/parse?url=${encodeURIComponent(url)}`);
+    const data = await r.json();
+    if (data.error) {
+      logDiv.textContent = `❌ ${data.error}`;
+      btn.disabled = false;
+      return;
+    }
+    document.getElementById('pornhubTitle').textContent = `🎬 ${data.title}`;
+    document.getElementById('pornhubMeta').textContent = `⏱ ${data.duration_str}`;
+    infoDiv.style.display = 'block';
+    logDiv.textContent = '✅ 解析成功！选择清晰度后点击下载';
+  } catch (e) {
+    logDiv.textContent = `❌ 解析失败: ${e.message}`;
+  }
+  btn.disabled = false;
+}
+
+async function pornhubDownload() {
+  if (!_pornhubUrl) return;
+  const quality = document.getElementById('pornhubQuality').value;
+  const logDiv = document.getElementById('pornhubLog');
+  const btn = document.getElementById('pornhubDlBtn');
+
+  btn.disabled = true;
+  logDiv.textContent = `⏳ 下载中 (${quality})... 请耐心等待\n`;
+
+  try {
+    const r = await fetch('/api/pornhub/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: _pornhubUrl, quality }),
+    });
+    const data = await r.json();
+    if (data.success) {
+      logDiv.textContent += `\n✅ 下载完成!\n文件: ${data.file}\n大小: ${data.size_mb} MB`;
+    } else {
+      logDiv.textContent += `\n❌ 失败: ${data.error}`;
+    }
+  } catch (e) {
+    logDiv.textContent += `\n❌ 错误: ${e.message}`;
+  }
+  btn.disabled = false;
+}
+
+// ========== MissAV 搜索 + 解析 + 下载 ==========
+
+async function missavSearch() {
+  const q = document.getElementById('missavKeyword').value.trim();
+  if (!q) return;
+  const resultDiv = document.getElementById('missavResult');
+  const detailDiv = document.getElementById('missavDetail');
+  const logDiv = document.getElementById('missavLog');
+  const btn = document.getElementById('missavSearchBtn');
+
+  btn.disabled = true;
+  detailDiv.style.display = 'none';
+  resultDiv.innerHTML = '<div style="padding:12px;color:var(--accent)">⏳ 搜索中...</div>';
+  logDiv.textContent = '';
+
+  try {
+    const r = await fetch(`/api/missav/search?q=${encodeURIComponent(q)}`);
+    const data = await r.json();
+    if (data.error) {
+      resultDiv.innerHTML = `<div style="padding:12px;color:var(--err)">❌ ${data.error}</div>`;
+      btn.disabled = false;
+      return;
+    }
+    if (data.urls.length === 0) {
+      resultDiv.innerHTML = '<div style="padding:12px;color:var(--text-dim)">😕 未找到视频</div>';
+      btn.disabled = false;
+      return;
+    }
+    resultDiv.innerHTML = `<div style="margin-bottom:8px;font-size:13px;color:var(--text-dim)">找到 ${data.total} 个视频：</div>
+      <div style="display:flex;flex-direction:column;gap:6px">` +
+      data.urls.map((url, i) =>
+        `<a href="#" onclick="missavParseUrl('${url.replace(/'/g, "\\'")}'); return false"
+            style="display:block;padding:8px 12px;background:var(--search-bg);border-radius:6px;
+                   color:var(--accent);text-decoration:none;font-size:13px"
+            onmouseover="this.style.background='var(--card-hover)'"
+            onmouseout="this.style.background='var(--search-bg)'">
+          ${i+1}. ${url.replace('https://missav.live/', '')}
+        </a>`
+      ).join('') + '</div>';
+  } catch (e) {
+    resultDiv.innerHTML = `<div style="padding:12px;color:var(--err)">❌ 搜索失败: ${e.message}</div>`;
+  }
+  btn.disabled = false;
+}
+
+async function missavParseUrl(url) {
+  const detailDiv = document.getElementById('missavDetail');
+  const logDiv = document.getElementById('missavLog');
+  detailDiv.style.display = 'block';
+  detailDiv.innerHTML = '<div style="padding:12px;color:var(--accent)">⏳ 解析视频信息...</div>';
+  logDiv.textContent = '';
+
+  try {
+    const r = await fetch(`/api/missav/parse?url=${encodeURIComponent(url)}`);
+    const data = await r.json();
+    if (data.error) {
+      detailDiv.innerHTML = `<div style="padding:12px;color:var(--err)">❌ ${data.error}</div>`;
+      return;
+    }
+    const qualities = data.qualities || [];
+    const title = data.title || url.split('/').pop();
+    let qualityHtml = qualities.length === 0
+      ? '<p style="color:var(--text-dim);margin-top:8px">⚠️ 无可用清晰度</p>'
+      : '<div class="quality-btns">' + qualities.map(q =>
+        `<button class="quality-btn" onclick="missavDownload('${data.uuid}','${q}')">⬇ ${q}</button>`
+      ).join('') + '</div>';
+    detailDiv.innerHTML = `
+      <div class="missav-info">
+        <div class="title">🎬 ${title}</div>
+        <div class="meta">UUID: ${data.uuid}</div>
+        ${qualityHtml}
+      </div>`;
+  } catch (e) {
+    detailDiv.innerHTML = `<div style="padding:12px;color:var(--err)">❌ 解析失败: ${e.message}</div>`;
+  }
+}
+
+async function missavDownload(uuid, quality) {
+  const logDiv = document.getElementById('missavLog');
+  logDiv.textContent = '⏳ 下载中... 请耐心等待（大文件需要几分钟）\n';
+
+  try {
+    const r = await fetch('/api/missav/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ uuid, quality }),
+    });
+    const data = await r.json();
+    if (data.success) {
+      logDiv.textContent += `\n✅ 下载完成!\n文件: ${data.file}\n大小: ${data.size_mb} MB`;
+    } else {
+      logDiv.textContent += `\n❌ 失败: ${data.error}`;
+    }
+  } catch (e) {
+    logDiv.textContent += `\n❌ 错误: ${e.message}`;
+  }
+}
+</script>
+</body>
+</html>

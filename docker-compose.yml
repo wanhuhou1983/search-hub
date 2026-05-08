@@ -1,0 +1,15 @@
+version: "3.9"
+
+services:
+  search-hub:
+    build: .
+    container_name: search-hub
+    restart: unless-stopped
+    ports:
+      - "18080:18080"
+    environment:
+      - HOST=0.0.0.0
+      - PORT=18080
+    # 如果需要持久化下载文件，映射下载目录
+    # volumes:
+    #   - ./downloads:/root/Downloads
