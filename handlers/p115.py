@@ -1,95 +1,62 @@
 """
-115网盘搜索 - 优先本地索引，回退轻量 API
+115网盘搜索 - 调用 115 文件搜索 API
 """
 
-import time
+import json
+import urllib.request
 from config import P115_COOKIE, MAX_RESULTS_PER_SOURCE
-from handlers.disk_common import load_index, search_local
 
-ROOT_FOLDERS = [
-    ("2783096189510179553", "最近接收"),
-    ("2566616380224789265", "手机相册"),
-    ("159844195371266227", "云下载"),
-    ("2783096190340651748", "欧美剧_45T"),
-    ("2240909338279410738", "手机备份"),
-    ("1896619827959692686", "世界数学奥林匹克解题大辞典(南开大学数学系) 全5卷"),
-    ("1882445498506280614", "视频"),
-    ("1469398062080773950", "每天听本书"),
-    ("1421152633686118382", "看过的电影"),
-    ("1376249784921804161", "书籍·杂志·论文·研报"),
-    ("1376249411570027762", "CS技术相关"),
-    ("1322455683529494089", "stockData"),
-    ("1133703177607218176", "电影"),
-    ("635810142797071851", "动画"),
-    ("634591039491048792", "电视剧"),
-    ("519722610041", "软件·驱动程序"),
-]
+SEARCH_URL = "https://webapi.115.com/files/search?search_value={q}&aid=1&offset=0&limit=100"
+
+
+def _api_search(q: str, max_results: int) -> list:
+    """调用 115 官方搜索 API"""
+    if not P115_COOKIE:
+        return []
+    url = SEARCH_URL.format(q=urllib.request.quote(q))
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Cookie": P115_COOKIE,
+        "Origin": "https://115.com",
+        "Referer": "https://115.com/",
+    })
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = json.loads(r.read())
+    except Exception:
+        return []
+
+    if not data.get("state"):
+        return []
+
+    results = []
+    for item in data.get("data") or []:
+        name = item.get("n", "")
+        cid = str(item.get("cid", ""))
+        pid = str(item.get("pid", ""))
+        results.append({
+            "name": name,
+            "path": name,
+            "is_dir": item.get("fc", 0) > 0,
+            "size": item.get("s") or item.get("p", 0),
+            "id": cid,
+            "parent_id": pid,
+            "source": "p115",
+        })
+        if len(results) >= max_results:
+            break
+
+    return results
 
 
 def search(q: str, timeout: int = 60):
     if not q.strip():
         return {"source": "p115", "results": [], "total": 0}
 
-    # 优先本地索引
-    cached = load_index("p115")
-    if cached is not None:
-        results = search_local(cached, q, MAX_RESULTS_PER_SOURCE)
-        return {
-            "source": "p115",
-            "results": results[:MAX_RESULTS_PER_SOURCE],
-            "total": len(results),
-            "cached": True,
-        }
+    results = _api_search(q, MAX_RESULTS_PER_SOURCE)
 
-    # 回退：轻量 API 搜索（只搜根目录+第一层）
-    try:
-        try:
-            from p115client import P115Client
-        except ImportError:
-            return {"source": "p115", "error": "p115client 未安装，请 pip install p115client", "results": []}
-        if not P115_COOKIE:
-            return {"source": "p115", "error": "P115_COOKIE 未配置", "results": []}
-        client = P115Client(P115_COOKIE)
-        q_lower = q.lower()
-        results = []
-
-        for cid, name in ROOT_FOLDERS:
-            if q_lower in name.lower():
-                results.append({
-                    "name": name, "path": name,
-                    "is_dir": True, "size": 0, "id": cid, "source": "p115",
-                })
-                if len(results) >= MAX_RESULTS_PER_SOURCE:
-                    return {"source": "p115", "results": results, "total": len(results)}
-
-        for root_cid, root_name in ROOT_FOLDERS:
-            try:
-                resp = client.request(
-                    "https://webapi.115.com/files",
-                    params={"cid": root_cid, "show_dir": 1, "offset": 0, "limit": 200, "aid": 1},
-                )
-            except Exception:
-                continue
-            if not resp.get("state"):
-                continue
-            for item in resp.get("data", []):
-                name = item.get("n", "")
-                if q_lower not in name.lower():
-                    continue
-                item_cid = str(item.get("cid", ""))
-                results.append({
-                    "name": name,
-                    "path": f"{root_name}/{name}",
-                    "is_dir": item.get("fc", 0) > 0,
-                    "size": item.get("s") or item.get("p", 0),
-                    "id": item_cid,
-                    "source": "p115",
-                })
-                if len(results) >= MAX_RESULTS_PER_SOURCE:
-                    return {"source": "p115", "results": results, "total": len(results)}
-            time.sleep(0.1)
-
-        return {"source": "p115", "results": results, "total": len(results)}
-
-    except Exception as e:
-        return {"source": "p115", "error": str(e), "results": []}
+    return {
+        "source": "p115",
+        "results": results,
+        "total": len(results),
+    }
