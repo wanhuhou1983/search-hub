@@ -368,6 +368,7 @@
   <div class="tabs">
     <button class="tab-btn active" onclick="switchTab('search')">🔎 搜索</button>
     <button class="tab-btn" onclick="switchTab('videodl')">🎬 视频下载</button>
+    <button class="tab-btn" onclick="switchTab('settings')">🔧 设置</button>
   </div>
 
   <!-- ====== 搜索 Tab ====== -->
@@ -463,7 +464,59 @@
     </div>
   </div>
 
-</div>
+</div><!-- /tab-videodl -->
+
+<!-- ====== 设置 Tab ====== -->
+<div class="tab-content" id="tab-settings">
+
+  <h3 style="margin-bottom:16px;font-size:16px;">🔧 网盘认证管理</h3>
+
+  <div id="tokenStatus" style="margin-bottom:20px;">
+    <div class="status-bar" id="tokenStatusBar" style="text-align:left;padding:0 0 12px">
+      <span class="loading">⏳ 检查中...</span>
+    </div>
+  </div>
+
+  <div id="tokenCards"></div>
+
+  <hr style="border:0;border-top:1px solid var(--border);margin:20px 0">
+
+  <details style="margin-bottom:12px">
+    <summary style="cursor:pointer;font-size:14px;font-weight:500;color:var(--text-dim)">📖 Token 获取与更新说明</summary>
+    <div style="margin-top:12px;font-size:13px;line-height:1.8;color:var(--text-dim)">
+      <table style="width:100%;border-collapse:collapse">
+        <tr style="border-bottom:1px solid var(--border)">
+          <th style="text-align:left;padding:6px 8px">网盘</th>
+          <th style="text-align:left;padding:6px 8px">凭据类型</th>
+          <th style="text-align:left;padding:6px 8px">获取方式</th>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:6px 8px">百度网盘</td>
+          <td style="padding:6px 8px">access_token</td>
+          <td style="padding:6px 8px">OAuth 授权 → 从 https://pan.baidu.com/union/login 申请 → 填入 <code>config.py</code> 的 <code>BAIDU_ACCESS_TOKEN</code></td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:6px 8px">115网盘</td>
+          <td style="padding:6px 8px">cookie</td>
+          <td style="padding:6px 8px">浏览器登录 115.com → F12 → Network 请求 → 复制 Cookie 头 → 设环境变量 <code>P115_COOKIE</code></td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:6px 8px">夸克网盘</td>
+          <td style="padding:6px 8px">cookie</td>
+          <td style="padding:6px 8px">浏览器登录 pan.quark.cn → F12 复制 Cookie → 写入 <code>quark_cookies.json</code></td>
+        </tr>
+        <tr style="border-bottom:1px solid var(--border)">
+          <td style="padding:6px 8px">阿里云盘</td>
+          <td style="padding:6px 8px">refresh_token</td>
+          <td style="padding:6px 8px">浏览器登录 aliyundrive.com → F12 → Console → <code>JSON.parse(localStorage.token).refresh_token</code> → 运行 <code>aliyun login --token xxx</code></td>
+        </tr>
+      </table>
+
+      <p style="margin-top:12px"><strong>提示：</strong>更新完 Token 后重启 search-hub 服务即可生效。当前状态通过 <code>/api/token/status</code> 自动检测。</p>
+    </div>
+  </details>
+
+</div><!-- /tab-settings -->
 
 <script>
 // ========== 状态 ==========
@@ -474,6 +527,7 @@ const SOURCE_NAMES = {
   baidu:  { name: '百度网盘', icon: '☁️' },
   p115:   { name: '115网盘', icon: '☁️' },
   quark:  { name: '夸克网盘', icon: '☁️' },
+  aliyun: { name: '阿里云盘', icon: '☁️' },
   zlib:   { name: 'Z-Library', icon: '📚' },
 };
 
@@ -652,7 +706,7 @@ async function doSearch() {
             const path = item.path || '';
             return `<a href="#" onclick="event.stopPropagation(); openFileOrDir('${path.replace(/'/g, "\\'")}'); return false;">📂 打开路径</a>`;
           }
-          if ((key === 'baidu' || key === 'p115' || key === 'quark') && !item.is_dir && item.id) {
+          if ((key === 'baidu' || key === 'p115' || key === 'quark' || key === 'aliyun') && !item.is_dir && item.id) {
             return `<a href="#" onclick="event.stopPropagation(); downloadFile('${key}', '${item.id}', '${item.name.replace(/'/g, "\\'")}'); return false;">⬇ 下载</a>`;
           }
           return '';
@@ -960,6 +1014,68 @@ async function missavDownload(uuid, quality) {
   } catch (e) {
     logDiv.textContent += `\n❌ 错误: ${e.message}`;
   }
+}
+
+// ========== Token 状态检查 ==========
+const STATUS_MAP = {
+  'OK':      { icon: '🟢', label: '有效', cls: '' },
+  'NONE':    { icon: '🔴', label: '未配置', cls: 'error' },
+  'EXPIRED': { icon: '🔴', label: '已过期', cls: 'error' },
+  'INVALID': { icon: '🔴', label: '已失效', cls: 'error' },
+  'NOLOGIN': { icon: '🔴', label: '未登录', cls: 'error' },
+  'CFG_ERR': { icon: '🔴', label: '配置错误', cls: 'error' },
+  'ERR':     { icon: '🔴', label: '错误', cls: 'error' },
+  'WARN':    { icon: '🟡', label: '异常', cls: 'warn' },
+  'TIMEOUT': { icon: '🟡', label: '超时', cls: 'warn' },
+  'FAIL':    { icon: '🔴', label: '失败', cls: 'error' },
+};
+
+async function loadTokenStatus() {
+  const bar = document.getElementById('tokenStatusBar');
+  const cards = document.getElementById('tokenCards');
+
+  try {
+    const r = await fetch('/api/token/status');
+    const data = await r.json();
+    const checks = data.checks || [];
+
+    let ok = 0, total = checks.length;
+    cards.innerHTML = '';
+    for (const c of checks) {
+      const st = STATUS_MAP[c.status] || { icon: '❓', label: c.status, cls: 'warn' };
+      if (c.status === 'OK') ok++;
+
+      const card = document.createElement('div');
+      card.className = 'source-group';
+      card.style.marginBottom = '10px';
+      card.innerHTML = `
+        <div class="source-header" style="cursor:default">
+          <div class="name">
+            <span>${st.icon}</span>
+            <span>${c.name}</span>
+            <span class="${st.cls === 'error' ? 'error-badge' : st.cls === 'warn' ? 'error-badge' : 'badge'}" style="${st.cls === 'warn' ? 'background:var(--warn);color:#0a0a23' : ''}">${st.label}</span>
+          </div>
+          <div style="font-size:12px;color:var(--text-dim)">${c.expires || ''}</div>
+        </div>
+        <div style="padding:12px 18px;font-size:13px">
+          <div style="color:var(--text)">${c.detail || '—'}</div>
+          ${c.fix && c.status !== 'OK' ? `<div style="color:var(--warn);margin-top:4px;font-size:12px">💡 ${c.fix}</div>` : ''}
+        </div>
+      `;
+      cards.appendChild(card);
+    }
+
+    bar.innerHTML = `<span>${ok}/${total} 个网盘认证正常</span>`;
+  } catch (e) {
+    bar.innerHTML = `<span class="error">❌ 检查失败: ${e.message}</span>`;
+  }
+}
+
+// 切到设置 Tab 时自动检查
+const _origSwitch = switchTab;
+function switchTab(name) {
+  _origSwitch(name);
+  if (name === 'settings') loadTokenStatus();
 }
 </script>
 </body>

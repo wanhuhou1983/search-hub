@@ -9,10 +9,13 @@
 """
 
 import asyncio
+import json
 import logging
 import os
 import subprocess
+import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from pydantic import BaseModel
 from fastapi import FastAPI, Query
@@ -49,6 +52,7 @@ SEARCH_SOURCES = {
     "baidu":    {"module": "handlers.baidu",    "name": "百度网盘"},
     "p115":     {"module": "handlers.p115",     "name": "115网盘"},
     "quark":    {"module": "handlers.quark",    "name": "夸克网盘"},
+    "aliyun":   {"module": "handlers.aliyun",   "name": "阿里云盘"},
     "zlib":     {"module": "handlers.zlib",     "name": "Z-Library"},
 }
 
@@ -57,6 +61,7 @@ DOWNLOAD_SOURCES = {
     "baidu": {"module": "handlers.disk_common", "func": "baidu_download_url"},
     "p115":  {"module": "handlers.disk_common", "func": "p115_download_url"},
     "quark": {"module": "handlers.disk_common", "func": "quark_download_url"},
+    "aliyun": {"module": "handlers.aliyun", "func": "download_url"},
 }
 
 
@@ -160,6 +165,32 @@ async def list_sources():
             for k, v in SEARCH_SOURCES.items()
         ]
     }
+
+
+# ═══════════════════════════════════════════════════════
+#  网盘 Token 状态检查
+# ═══════════════════════════════════════════════════════
+
+
+@app.get("/api/token/status")
+async def token_status():
+    """检查各网盘 token/cookie 状态"""
+    results = []
+    script_path = Path(__file__).parent / "scripts" / "token_check.py"
+    try:
+        r = subprocess.run(
+            [sys.executable, str(script_path), "--json"],
+            capture_output=True, text=True, timeout=30,
+            encoding="utf-8", errors="replace",
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            results = json.loads(r.stdout)
+        else:
+            error_msg = r.stderr[:200] if r.stderr else f"exit code {r.returncode}"
+            results = [{"name": "错误", "status": "🔴 检查失败", "detail": error_msg}]
+    except Exception as e:
+        results = [{"name": "错误", "status": "🔴 检查失败", "detail": str(e)}]
+    return {"checks": results, "time": datetime.now().isoformat()}
 
 
 # ═══════════════════════════════════════════════════════
