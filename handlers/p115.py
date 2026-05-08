@@ -3,7 +3,6 @@
 """
 
 import time
-from p115client import P115Client
 from config import P115_COOKIE, MAX_RESULTS_PER_SOURCE
 from handlers.disk_common import load_index, search_local
 
@@ -44,6 +43,12 @@ def search(q: str, timeout: int = 60):
 
     # 回退：轻量 API 搜索（只搜根目录+第一层）
     try:
+        try:
+            from p115client import P115Client
+        except ImportError:
+            return {"source": "p115", "error": "p115client 未安装，请 pip install p115client", "results": []}
+        if not P115_COOKIE:
+            return {"source": "p115", "error": "P115_COOKIE 未配置", "results": []}
         client = P115Client(P115_COOKIE)
         q_lower = q.lower()
         results = []

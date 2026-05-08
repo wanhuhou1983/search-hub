@@ -8,6 +8,21 @@ from handlers.disk_common import load_index, search_local
 
 API_BASE = "https://pan.baidu.com/rest/2.0/xpan/file"
 
+BAIDU_ERRNO_MAP = {
+    0:     "成功",
+    2:     "参数错误",
+    6:     "access_token 无效或已过期，请重新获取",
+    10:    "文件不存在",
+    9100:  "用户未登录或授权已失效，请重新授权",
+    92000: "请求频率过高，请稍后重试",
+    92001: "并发请求数超限",
+}
+
+
+def _baidu_errno_msg(errno: int) -> str:
+    # 百度 API 可能返回负值（如 -6），取绝对值映射
+    return BAIDU_ERRNO_MAP.get(errno, BAIDU_ERRNO_MAP.get(abs(errno), f"未知错误码({errno})"))
+
 
 def _load_or_fallback():
     """尝试加载本地索引"""
@@ -48,8 +63,9 @@ def search(q: str, timeout: int = 10):
             return {"source": "baidu", "error": f"HTTP {r.status_code}", "results": []}
 
         data = r.json()
-        if data.get("errno") != 0:
-            return {"source": "baidu", "error": f"errno={data.get('errno')}", "results": []}
+        errno = data.get("errno")
+        if errno != 0:
+            return {"source": "baidu", "error": f"errno={errno}: {_baidu_errno_msg(errno)}", "results": []}
 
         items = []
         for f in data.get("list", []):
