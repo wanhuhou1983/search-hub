@@ -5,6 +5,9 @@ __pycache__/
 dist/
 build/
 
+# 本地配置（含凭据）
+config.py
+
 # 日志
 *.log
 

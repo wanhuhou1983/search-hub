@@ -1,35 +1,47 @@
 """
 统一搜索中心 - 配置
 
-所有认证信息集中管理。
+敏感信息通过环境变量注入，优先读取环境变量，无环境变量时使用默认值。
+本地路径配置可直接修改。
 """
 
+import os
 from pathlib import Path
 
 # ========== 本地搜索 ==========
-ES_BIN = r"C:\Users\linhu\.workbuddy\binaries\es.exe"
-
-# ========== Obsidian Vault ==========
-OBSIDIAN_VAULT = Path(r"C:\Users\linhu\Documents\GitHub\wanhuhou_vault")
-OBSIDIAN_VAULT2 = Path(r"C:\Users\linhu\Documents\GitHub\infohub")
-
-# ========== 百度网盘 ==========
-BAIDU_ACCESS_TOKEN = "123.c20c8814deb06f9733dc4b24dfd34003.Y7Wub9ay1msjpbKemnyj-EECKvy56-MSB6wpkHT.Vett3g"
-
-# ========== 115网盘 ==========
-P115_COOKIE = (
-    "UID=99999320_A1_1778115175; "
-    "CID=3ee3a513f8a7d06ccbf7548b378de379; "
-    "SEID=eb005e98e5f1b33e63a806e272c72e0eb8b9c244b4d2aa6b00abe3a4c38f1072103d8eb635bb3a975d545995a38be101b354d7e32c306bb925aef822; "
-    "KID=45d3dfdaa9d1e87de11c0ce9b13e59d1"
+# es.exe (Everything CLI) 路径
+ES_BIN = os.environ.get(
+    "ES_BIN",
+    r"C:\Users\linhu\.workbuddy\binaries\es.exe"
 )
 
+# ========== Obsidian Vault ==========
+OBSIDIAN_VAULT = Path(
+    os.environ.get("OBSIDIAN_VAULT",
+                   r"C:\Users\linhu\Documents\GitHub\wanhuhou_vault")
+)
+OBSIDIAN_VAULT2 = Path(
+    os.environ.get("OBSIDIAN_VAULT2",
+                   r"C:\Users\linhu\Documents\GitHub\infohub")
+)
+
+# ========== 百度网盘 Access Token ==========
+# 安全提示：建议通过环境变量 BAIDU_ACCESS_TOKEN 设置
+BAIDU_ACCESS_TOKEN = os.environ.get("BAIDU_ACCESS_TOKEN", "")
+
+# ========== 115网盘 Cookie ==========
+# 安全提示：建议通过环境变量 P115_COOKIE 设置
+P115_COOKIE = os.environ.get("P115_COOKIE", "")
+
 # ========== 夸克网盘 ==========
-QUARK_COOKIE_FILE = Path(r"C:\Users\linhu\.workbuddy\skills\quark-storage\quark_cookies.json")
+QUARK_COOKIE_FILE = Path(
+    os.environ.get("QUARK_COOKIE_FILE",
+                   str(Path.home() / ".workbuddy" / "skills" / "quark-storage" / "quark_cookies.json"))
+)
 
 # ========== Z-Library ==========
-ZLIB_SEARCH_URL = "https://1lib.s/s/{}"
+ZLIB_SEARCH_URL = os.environ.get("ZLIB_SEARCH_URL", "https://1lib.s/s/{}")
 
 # ========== 搜索配置 ==========
-SEARCH_TIMEOUT = 60         # 每个源超时（秒，115较慢设大些）
-MAX_RESULTS_PER_SOURCE = 100  # 每个源最多返回
+SEARCH_TIMEOUT = int(os.environ.get("SEARCH_TIMEOUT", "60"))
+MAX_RESULTS_PER_SOURCE = int(os.environ.get("MAX_RESULTS_PER_SOURCE", "100"))

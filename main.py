@@ -10,8 +10,11 @@
 
 import asyncio
 import logging
+import os
+import subprocess
 import time
 from pathlib import Path
+from pydantic import BaseModel
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,6 +28,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ─── Pydantic Request Schemas ────────────────────────
+
+class MissavDownloadReq(BaseModel):
+    uuid: str
+    quality: str = "720p"
+
+class XvideosDownloadReq(BaseModel):
+    url: str
+
+class PornhubDownloadReq(BaseModel):
+    url: str
+    quality: str = "720p"
 
 # ─── 搜索源注册（存模块名/函数名，不 import） ───────────
 SEARCH_SOURCES = {
@@ -85,7 +101,7 @@ async def _run_search(source_key: str, q: str, timeout: int):
     if not hasattr(mod, "search"):
         return {"source": source_key, "error": "handler 无 search 函数", "results": []}
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _search():
         try:
@@ -150,9 +166,6 @@ async def list_sources():
 #  打开文件路径（仅本地）
 # ═══════════════════════════════════════════════════════
 
-import subprocess
-import os
-
 
 @app.get("/api/open-path")
 async def open_path(path: str = Query("", description="要打开的本地文件/文件夹路径")):
@@ -169,11 +182,9 @@ async def open_path(path: str = Query("", description="要打开的本地文件/
 
     try:
         if os.path.isfile(path):
-            # 打开并选中文件
-            subprocess.Popen(["explorer", "/select,", path], shell=True)
+            subprocess.Popen(["explorer", "/select,", path])
         else:
-            # 打开文件夹
-            subprocess.Popen(["explorer", path], shell=True)
+            subprocess.Popen(["explorer", path])
         return {"success": True, "path": path}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -253,15 +264,13 @@ async def missav_parse(url: str = Query("", description="MissAV 视频页面 URL
 
 
 @app.post("/api/missav/download")
-async def missav_download(data: dict):
-    uuid = data.get("uuid", "")
-    quality = data.get("quality", "720p")
-    if not uuid:
+async def missav_download(data: MissavDownloadReq):
+    if not data.uuid:
         return JSONResponse({"error": "缺少 uuid"}, status_code=400)
     mod = _load_module("handlers.missav")
     if mod is None:
         return JSONResponse({"error": "MissAV handler 加载失败"}, status_code=500)
-    result = await mod.download_video(uuid, quality)
+    result = await mod.download_video(data.uuid, data.quality)
     if "error" in result:
         return JSONResponse(result, status_code=500)
     return result
@@ -281,14 +290,13 @@ async def xvideos_parse(url: str = Query("", description="XVideos 视频页面 U
 
 
 @app.post("/api/xvideos/download")
-async def xvideos_download(data: dict):
-    url = data.get("url", "")
-    if not url:
+async def xvideos_download(data: XvideosDownloadReq):
+    if not data.url:
         return JSONResponse({"error": "缺少 url"}, status_code=400)
     mod = _load_module("handlers.xvideos")
     if mod is None:
         return JSONResponse({"error": "XVideos handler 加载失败"}, status_code=500)
-    result = await mod.download_video(url)
+    result = await mod.download_video(data.url)
     if "error" in result:
         return JSONResponse(result, status_code=500)
     return result
@@ -308,15 +316,13 @@ async def pornhub_parse(url: str = Query("", description="PornHub 视频页面 U
 
 
 @app.post("/api/pornhub/download")
-async def pornhub_download(data: dict):
-    url = data.get("url", "")
-    quality = data.get("quality", "720p")
-    if not url:
+async def pornhub_download(data: PornhubDownloadReq):
+    if not data.url:
         return JSONResponse({"error": "缺少 url"}, status_code=400)
     mod = _load_module("handlers.pornhub")
     if mod is None:
         return JSONResponse({"error": "PornHub handler 加载失败"}, status_code=500)
-    result = await mod.download_video(url, quality)
+    result = await mod.download_video(data.url, data.quality)
     if "error" in result:
         return JSONResponse(result, status_code=500)
     return result
@@ -327,15 +333,19 @@ async def pornhub_download(data: dict):
 # ═══════════════════════════════════════════════════════
 
 _INDEX_CACHE = None
+_INDEX_LOCK = asyncio.Lock()
 
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
     global _INDEX_CACHE
     if _INDEX_CACHE is None:
-        html_path = Path(__file__).parent / "index.html"
-        if html_path.exists():
-            _INDEX_CACHE = html_path.read_text(encoding="utf-8")
-        else:
-            _INDEX_CACHE = "<h1>index.html not found</h1>"
+        async with _INDEX_LOCK:
+            # double-check 模式
+            if _INDEX_CACHE is None:
+                html_path = Path(__file__).parent / "index.html"
+                if html_path.exists():
+                    _INDEX_CACHE = html_path.read_text(encoding="utf-8")
+                else:
+                    _INDEX_CACHE = "<h1>index.html not found</h1>"
     return _INDEX_CACHE
