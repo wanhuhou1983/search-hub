@@ -23,10 +23,20 @@ from pathlib import Path
 SEARCH_HUB_DIR = Path(__file__).parent.parent
 DATA_DIR = SEARCH_HUB_DIR / "data"
 
+# 从 config.py 读取凭据（优先环境变量）
+sys.path.insert(0, str(SEARCH_HUB_DIR))
+try:
+    import config as _cfg
+    BAIDU_TOKEN = getattr(_cfg, 'BAIDU_ACCESS_TOKEN', os.environ.get('BAIDU_ACCESS_TOKEN', ''))
+    P115_COOKIE_VAL = getattr(_cfg, 'P115_COOKIE', os.environ.get('P115_COOKIE', ''))
+except Exception:
+    BAIDU_TOKEN = os.environ.get('BAIDU_ACCESS_TOKEN', '')
+    P115_COOKIE_VAL = os.environ.get('P115_COOKIE', '')
+
 
 def check_baidu() -> dict:
     """检查百度网盘 access_token"""
-    token = os.environ.get("BAIDU_ACCESS_TOKEN", "")
+    token = BAIDU_TOKEN
     if not token:
         return {
             "name": "百度网盘",
@@ -48,8 +58,14 @@ def check_baidu() -> dict:
         }
     try:
         r = requests.get(
-            "https://pan.baidu.com/rest/2.0/xpan/nas?method=userinfo",
-            params={"access_token": token},
+            "https://pan.baidu.com/rest/2.0/xpan/file?method=search",
+            params={
+                "access_token": token,
+                "key": "test",
+                "num": 1,
+                "path": "/",
+                "recursion": 1,
+            },
             timeout=10,
         )
         data = r.json()
@@ -97,7 +113,7 @@ def check_baidu() -> dict:
 
 def check_p115() -> dict:
     """检查115网盘 cookie"""
-    cookie = os.environ.get("P115_COOKIE", "")
+    cookie = P115_COOKIE_VAL
     if not cookie:
         return {
             "name": "115网盘",
@@ -109,18 +125,25 @@ def check_p115() -> dict:
 
     try:
         import requests
+        headers = {
+            "Cookie": cookie,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Origin": "https://115.com",
+            "Referer": "https://115.com/",
+        }
         r = requests.get(
-            "https://webapi.115.com/user/get_info",
-            cookies={"Cookie": cookie} if "UID=" not in cookie else {},
-            headers={"Cookie": cookie} if "UID=" in cookie else {},
+            "https://webapi.115.com/files/index_info?count_space_nums=1",
+            headers=headers,
             timeout=10,
         )
         data = r.json()
         if data.get("state"):
+            info = data.get("data", {}).get("space_info", {})
+            total = info.get("all_total", {}).get("size_format", "N/A")
             return {
                 "name": "115网盘",
                 "status": "OK",
-                "detail": f"用户ID: {data.get('user_id', 'N/A')}",
+                "detail": f"空间: {total}",
                 "expires": "通常3-6个月，取决于活跃度",
                 "fix": "无需操作",
             }
@@ -179,25 +202,15 @@ def check_quark() -> dict:
         # 尝试访问夸克
         import requests
         r = requests.get(
-            "https://drive.quark.cn/1/clouddrive/capacity",
+            "https://drive-pc.quark.cn/1/clouddrive/auth/pc/flush?pr=ucpro&fr=pc&uc_param_str=",
             headers={
                 "Cookie": cookie_str,
-                "User-Agent": "Mozilla/5.0",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             },
             timeout=10,
         )
         data = r.json()
         if data.get("code") == 0:
-            cap = data.get("data", {}).get("capacity", {})
-            if cap:
-                total_gb = cap.get("total", 0) / (1024 ** 3)
-                return {
-                    "name": "夸克网盘",
-                    "status": "OK",
-                    "detail": f"空间: {total_gb:.0f} GB",
-                    "expires": "约30天",
-                    "fix": "无需操作",
-                }
             return {"name": "夸克网盘", "status": "OK", "detail": "登录正常", "expires": "约30天", "fix": "无需操作"}
         elif data.get("code") == 40100:
             return {"name": "夸克网盘", "status": "EXPIRED", "detail": "cookie 已失效 (40100)", "expires": "已过期", "fix": "重新登录夸克"}
