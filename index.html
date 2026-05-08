@@ -656,9 +656,9 @@ async function doSearch() {
 
     // 渲染结果
     resultsDiv.className = 'results visible';
-    const res = data.results || {};
+    const groups = data.results || {};
 
-    for (const [key, group] of Object.entries(res)) {
+    for (const [key, group] of Object.entries(groups)) {
       const info = SOURCE_NAMES[key] || { name: key, icon: '🔧' };
       const items = group.results || [];
       const error = group.error;
