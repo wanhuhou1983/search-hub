@@ -47,13 +47,15 @@ class PornhubDownloadReq(BaseModel):
 
 # ─── 搜索源注册（存模块名/函数名，不 import） ───────────
 SEARCH_SOURCES = {
-    "local":   {"module": "handlers.local",   "name": "本地文件"},
-    "obsidian": {"module": "handlers.obsidian", "name": "Obsidian"},
-    "baidu":    {"module": "handlers.baidu",    "name": "百度网盘"},
-    "p115":     {"module": "handlers.p115",     "name": "115网盘"},
-    "quark":    {"module": "handlers.quark",    "name": "夸克网盘"},
-    "aliyun":   {"module": "handlers.aliyun",   "name": "阿里云盘"},
-    "zlib":     {"module": "handlers.zlib",     "name": "Z-Library"},
+    "local":      {"module": "handlers.local",      "name": "本地文件"},
+    "obsidian":   {"module": "handlers.obsidian",   "name": "Obsidian"},
+    "baidu":      {"module": "handlers.baidu",      "name": "百度网盘"},
+    "p115":       {"module": "handlers.p115",       "name": "115网盘"},
+    "quark":      {"module": "handlers.quark",      "name": "夸克网盘"},
+    "aliyun":     {"module": "handlers.aliyun",     "name": "阿里云盘"},
+    "zlib":       {"module": "handlers.zlib",        "name": "Z-Library"},
+    "googledrive":{"module": "handlers.googledrive", "name": "Google Drive"},
+    "icloud":     {"module": "handlers.icloud",      "name": "iCloud Drive"},
 }
 
 # ─── 下载源注册 ──────────────────────────────────────
