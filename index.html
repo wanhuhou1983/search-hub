@@ -781,9 +781,9 @@ function switchTab(name) {
   if (tabBtn) tabBtn.classList.add('active');
   const tab = document.getElementById(`tab-${name}`);
   if (tab) tab.classList.add('active');
+  // 切到设置 Tab 时自动检查 Token
+  if (name === 'settings') loadTokenStatus();
 }
-
-// ========== 视频站点子面板切换 ==========
 function switchVideoSite(name, btn) {
   document.querySelectorAll('.source-btn[data-vsite]').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
@@ -1071,12 +1071,6 @@ async function loadTokenStatus() {
   }
 }
 
-// 切到设置 Tab 时自动检查
-const _origSwitch = switchTab;
-function switchTab(name) {
-  _origSwitch(name);
-  if (name === 'settings') loadTokenStatus();
-}
-</script>
+// ========== 视频站点子面板切换 ==========</script>
 </body>
 </html>
