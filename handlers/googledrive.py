@@ -1,53 +1,41 @@
 """
-Google Drive 搜索 - 通过 gws CLI 调用 Google Drive API v3
+Google Drive 搜索 - 通过 Google Drive API v3 (Python SDK)
 """
 
 import json
 import os
-import subprocess
-import shutil
-from config import GOOGLE_DRIVE_SEARCH_ENABLED, MAX_RESULTS_PER_SOURCE
+import pickle
+from pathlib import Path
+from config import (
+    GOOGLE_DRIVE_CLIENT_ID,
+    GOOGLE_DRIVE_CLIENT_SECRET,
+    GOOGLE_DRIVE_SEARCH_ENABLED,
+    MAX_RESULTS_PER_SOURCE,
+)
 
-_GWS_PATHS = [
-    shutil.which("gws"),
-    os.path.expanduser(r"~\AppData\Roaming\npm\gws"),
-    os.path.expanduser(r"~\AppData\Roaming\npm\gws.cmd"),
-    r"C:\Program Files\nodejs\node_modules\@googleworkspace\gws\bin\run.js",
-]
-
-
-def _find_gws() -> str | None:
-    """查找 gws CLI 路径"""
-    for p in _GWS_PATHS:
-        if p and os.path.isfile(p):
-            return p
-    return None
+_TOKEN_PATH = Path.home() / ".workbuddy" / "googledrive_token.json"
+_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 
-def _gws_available() -> bool:
-    return _find_gws() is not None
+def _get_credentials():
+    """读取已保存的 token，自动刷新过期的"""
+    if not _TOKEN_PATH.exists():
+        return None
 
-
-def _gws_authenticated() -> tuple[bool, str]:
-    """检查 gws 认证状态，返回 (ok, msg)"""
-    gws_bin = _find_gws()
-    if not gws_bin:
-        return False, "gws CLI 未安装"
     try:
-        r = subprocess.run(
-            [gws_bin, "auth", "status"],
-            capture_output=True, text=True, timeout=15,
-        )
-        out = r.stdout.strip()
-        if '"credential_source": "none"' in out:
-            return False, "gws 未认证，请运行: gws auth login"
-        if '"credential_source"' in out:
-            return True, ""
-        return False, "gws 认证状态异常"
-    except FileNotFoundError:
-        return False, "gws CLI 未安装"
-    except Exception as e:
-        return False, f"gws 检查失败: {e}"
+        from google.oauth2.credentials import Credentials
+        creds = Credentials.from_authorized_user_file(str(_TOKEN_PATH), _SCOPES)
+        if creds and creds.valid:
+            return creds
+        if creds and creds.expired and creds.refresh_token:
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+            with open(_TOKEN_PATH, "w") as f:
+                f.write(creds.to_json())
+            return creds
+    except Exception:
+        pass
+    return None
 
 
 def search(q: str, timeout: int = 30):
@@ -57,66 +45,70 @@ def search(q: str, timeout: int = 30):
     if not GOOGLE_DRIVE_SEARCH_ENABLED:
         return {"source": "googledrive", "error": "Google Drive 搜索已禁用", "results": []}
 
-    gws_bin = _find_gws()
-    if not gws_bin:
+    if not GOOGLE_DRIVE_CLIENT_ID or not GOOGLE_DRIVE_CLIENT_SECRET:
         return {
             "source": "googledrive",
-            "error": "gws CLI 未安装，请 npm install -g @googleworkspace/gws",
+            "error": "Google OAuth 凭据未配置，请在 config.py 中设置 GOOGLE_DRIVE_CLIENT_ID 和 GOOGLE_DRIVE_CLIENT_SECRET",
             "results": [],
         }
 
-    authed, msg = _gws_authenticated()
-    if not authed:
-        return {"source": "googledrive", "error": msg, "results": []}
+    creds = _get_credentials()
+    if not creds:
+        return {
+            "source": "googledrive",
+            "error": "Google Drive 未授权。请运行一次授权脚本：\n"
+                     f"  cd search-hub && python scripts/googledrive_auth.py\n"
+                     "浏览器会弹出，授权后即可使用",
+            "results": [],
+        }
 
     try:
-        params = json.dumps({"q": f"name contains '{q}'", "pageSize": 100})
-        cmd = [gws_bin, "drive", "files", "list", "--format", "json", "--params", params]
+        from googleapiclient.discovery import build
+        service = build("drive", "v3", credentials=creds, cache_discovery=False)
 
-        r = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout,
-            encoding="utf-8", errors="replace",
-        )
+        page_size = min(MAX_RESULTS_PER_SOURCE, 100)
+        results = []
+        page_token = None
 
-        if r.returncode != 0:
-            return {
-                "source": "googledrive",
-                "error": f"gws 调用失败: {r.stderr[:200]}",
-                "results": [],
-            }
+        while len(results) < MAX_RESULTS_PER_SOURCE:
+            resp = service.files().list(
+                q=f"name contains '{q}' and trashed=false",
+                pageSize=page_size,
+                fields="nextPageToken, files(id, name, mimeType, size, parents)",
+                pageToken=page_token,
+                orderBy="modifiedTime desc",
+            ).execute()
 
-        # 解析 NDJSON 输出（每行一个 JSON）
-        files = []
-        for line in r.stdout.strip().split("\n"):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                item = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+            for item in resp.get("files", []):
+                name = item.get("name", "")
+                fid = item.get("id", "")
+                mime = item.get("mimeType", "")
+                is_dir = mime == "application/vnd.google-apps.folder"
+                size = int(item.get("size", 0))
+                results.append({
+                    "name": name,
+                    "path": name,
+                    "is_dir": is_dir,
+                    "size": size,
+                    "id": fid,
+                    "mimeType": mime,
+                    "source": "googledrive",
+                })
+                if len(results) >= MAX_RESULTS_PER_SOURCE:
+                    break
 
-            name = item.get("name", "")
-            fid = item.get("id", "")
-            mime = item.get("mimeType", "")
-            is_dir = mime == "application/vnd.google-apps.folder"
-            size = int(item.get("size", 0))
-
-            files.append({
-                "name": name,
-                "path": name,
-                "is_dir": is_dir,
-                "size": size,
-                "id": fid,
-                "mimeType": mime,
-                "source": "googledrive",
-            })
-            if len(files) >= MAX_RESULTS_PER_SOURCE:
+            page_token = resp.get("nextPageToken")
+            if not page_token:
                 break
 
-        return {"source": "googledrive", "results": files, "total": len(files)}
+        return {"source": "googledrive", "results": results, "total": len(results)}
 
-    except subprocess.TimeoutExpired:
-        return {"source": "googledrive", "error": "超时", "results": []}
     except Exception as e:
-        return {"source": "googledrive", "error": str(e), "results": []}
+        emsg = str(e)
+        if "quota" in emsg.lower():
+            return {"source": "googledrive", "error": "Google Drive API 配额不足，请稍后再试", "results": []}
+        if "invalid_grant" in emsg or "token_expired" in emsg:
+            # Token 失效，删除重试
+            _TOKEN_PATH.unlink(missing_ok=True)
+            return {"source": "googledrive", "error": "Token 已失效，请重新运行授权脚本", "results": []}
+        return {"source": "googledrive", "error": f"Google Drive 搜索失败: {emsg[:200]}", "results": []}
