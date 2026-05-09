@@ -12,7 +12,9 @@ from pathlib import Path
 
 logger = logging.getLogger("search-hub.pornhub")
 
-YTDLP = r"C:\Users\linhu\.workbuddy\binaries\python\versions\3.13.12\Scripts\yt-dlp.exe"
+from config import YTDLP_BIN, _resolve_tool
+
+YTDLP = _resolve_tool(YTDLP_BIN, "yt-dlp")
 DOWNLOAD_DIR = Path.home() / "Downloads" / "pornhub"
 
 QUALITY_MAP = {

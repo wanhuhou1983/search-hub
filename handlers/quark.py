@@ -5,13 +5,11 @@
 import json
 import os
 import sys
-from config import MAX_RESULTS_PER_SOURCE
+from config import MAX_RESULTS_PER_SOURCE, QUARK_EXTRA_SITE_PACKAGES
 from handlers.disk_common import load_index, search_local
 
-PYTHON_ENV = r"C:\Users\linhu\.workbuddy\binaries\python\envs\default"
-SITE_PACKAGES = os.path.join(PYTHON_ENV, "Lib", "site-packages")
-if SITE_PACKAGES not in sys.path:
-    sys.path.insert(0, SITE_PACKAGES)
+if QUARK_EXTRA_SITE_PACKAGES and QUARK_EXTRA_SITE_PACKAGES not in sys.path:
+    sys.path.insert(0, QUARK_EXTRA_SITE_PACKAGES)
 
 
 def _get_cookie():

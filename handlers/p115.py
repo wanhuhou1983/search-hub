@@ -34,16 +34,28 @@ def _api_search(q: str, max_results: int) -> list:
         name = item.get("n", "")
         cid = str(item.get("cid", ""))
         pid = str(item.get("pid", ""))
+        pickcode = item.get("pc", "")
         parent_name = item.get("dp", "")
         path = f"{parent_name}/{name}" if parent_name and parent_name != name else name
+        size = item.get("s") or item.get("p", 0)
+        is_dir = item.get("fc", 0) > 0
+        # 判断是否是视频文件（115 API常把视频文件标记为is_dir，所以只要后缀匹配就算视频）
+        _video_exts = {'.mp4', '.mkv', '.avi', '.mov', '.wmv', '.flv', '.webm', '.ts', '.m4v', '.rmvb', '.rm', '.3gp'}
+        ext = ""
+        if "." in name:
+            ext = "." + name.rsplit(".", 1)[-1].lower()
+        is_video = ext in _video_exts
+
         results.append({
             "name": name,
             "path": path,
-            "is_dir": item.get("fc", 0) > 0,
-            "size": item.get("s") or item.get("p", 0),
+            "is_dir": is_dir,
+            "size": size,
             "id": cid,
+            "pickcode": pickcode,
             "parent_id": pid,
             "source": "p115",
+            "is_video": is_video,
         })
         if len(results) >= max_results:
             break

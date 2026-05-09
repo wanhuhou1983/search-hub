@@ -7,7 +7,7 @@ import socket
 import requests
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from pathlib import Path
-from config import ICLOUD_ACCOUNT, ICLOUD_PASSWORD, MAX_RESULTS_PER_SOURCE
+from config import ICLOUD_ACCOUNT, ICLOUD_PASSWORD, ICLOUD_USERNAME, MAX_RESULTS_PER_SOURCE
 
 _ICLOUD_COOKIE_DIR = str(Path.home() / ".workbuddy" / "icloud_cookies")
 
@@ -34,8 +34,9 @@ def _get_api(timeout: int):
     socket.setdefaulttimeout(timeout)
 
     try:
-        os.environ.setdefault("USERNAME", "linhu")
-        os.environ.setdefault("USER", "linhu")
+        if ICLOUD_USERNAME:
+            os.environ.setdefault("USERNAME", ICLOUD_USERNAME)
+            os.environ.setdefault("USER", ICLOUD_USERNAME)
         api = PyiCloudService(ICLOUD_ACCOUNT, ICLOUD_PASSWORD,
                               cookie_directory=_ICLOUD_COOKIE_DIR)
 

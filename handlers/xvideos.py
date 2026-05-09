@@ -11,7 +11,9 @@ from pathlib import Path
 
 logger = logging.getLogger("search-hub.xvideos")
 
-FFMPEG = r"C:\Users\linhu\WorkBuddy\20260328095145\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"
+from config import FFMPEG_BIN, _resolve_tool
+
+FFMPEG = _resolve_tool(FFMPEG_BIN, "ffmpeg")
 DOWNLOAD_DIR = Path.home() / "Downloads" / "xvideos"
 
 
