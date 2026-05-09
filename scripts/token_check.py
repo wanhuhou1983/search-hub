@@ -29,9 +29,17 @@ try:
     import config as _cfg
     BAIDU_TOKEN = getattr(_cfg, 'BAIDU_ACCESS_TOKEN', os.environ.get('BAIDU_ACCESS_TOKEN', ''))
     P115_COOKIE_VAL = getattr(_cfg, 'P115_COOKIE', os.environ.get('P115_COOKIE', ''))
+    GD_CLIENT_ID = getattr(_cfg, 'GOOGLE_DRIVE_CLIENT_ID', os.environ.get('GOOGLE_DRIVE_CLIENT_ID', ''))
+    GD_CLIENT_SECRET = getattr(_cfg, 'GOOGLE_DRIVE_CLIENT_SECRET', os.environ.get('GOOGLE_DRIVE_CLIENT_SECRET', ''))
+    IC_ACCOUNT = getattr(_cfg, 'ICLOUD_ACCOUNT', os.environ.get('ICLOUD_ACCOUNT', ''))
+    IC_PASSWORD = getattr(_cfg, 'ICLOUD_PASSWORD', os.environ.get('ICLOUD_PASSWORD', ''))
 except Exception:
     BAIDU_TOKEN = os.environ.get('BAIDU_ACCESS_TOKEN', '')
     P115_COOKIE_VAL = os.environ.get('P115_COOKIE', '')
+    GD_CLIENT_ID = os.environ.get('GOOGLE_DRIVE_CLIENT_ID', '')
+    GD_CLIENT_SECRET = os.environ.get('GOOGLE_DRIVE_CLIENT_SECRET', '')
+    IC_ACCOUNT = os.environ.get('ICLOUD_ACCOUNT', '')
+    IC_PASSWORD = os.environ.get('ICLOUD_PASSWORD', '')
 
 
 def check_baidu() -> dict:
@@ -273,6 +281,135 @@ def check_aliyun() -> dict:
         }
 
 
+def check_googledrive() -> dict:
+    """检查 Google Drive OAuth 授权状态"""
+    import shutil
+    token_file = Path.home() / ".workbuddy" / "googledrive_token.json"
+
+    if not GD_CLIENT_ID or not GD_CLIENT_SECRET:
+        return {
+            "name": "Google Drive",
+            "status": "NOCONFIG",
+            "detail": "OAuth 凭据未配置",
+            "expires": "—",
+            "fix": "在 config.py 中设置 GOOGLE_DRIVE_CLIENT_ID 和 GOOGLE_DRIVE_CLIENT_SECRET",
+        }
+
+    if not token_file.exists():
+        return {
+            "name": "Google Drive",
+            "status": "NOAUTH",
+            "detail": "Token 文件不存在",
+            "expires": "—",
+            "fix": "运行 python scripts/googledrive_auth.py 授权",
+        }
+
+    try:
+        from google.oauth2.credentials import Credentials
+        from google.auth.transport.requests import Request
+        from googleapiclient.discovery import build
+
+        creds = Credentials.from_authorized_user_file(str(token_file))
+        if not creds.valid:
+            if creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+                with open(token_file, "w") as f:
+                    f.write(creds.to_json())
+            else:
+                return {
+                    "name": "Google Drive",
+                    "status": "INVALID",
+                    "detail": "Token 无效且无法刷新",
+                    "expires": "—",
+                    "fix": "重新运行 python scripts/googledrive_auth.py",
+                }
+
+        service = build("drive", "v3", credentials=creds, cache_discovery=False)
+        about = service.about().get(fields="user,storageQuota").execute()
+        user = about.get("user", {}).get("displayName", "N/A")
+        used = int(about.get("storageQuota", {}).get("usage", 0))
+        total = int(about.get("storageQuota", {}).get("limit", 0))
+        used_gb = used / (1024**3)
+        total_gb = total / (1024**3)
+        return {
+            "name": "Google Drive",
+            "status": "OK",
+            "detail": f"用户: {user} | {used_gb:.1f}/{total_gb:.0f} GB",
+            "expires": "约 1 小时（SDK 自动刷新）",
+            "fix": "无需操作",
+        }
+    except Exception as e:
+        emsg = str(e)
+        if "invalid_grant" in emsg or "token_expired" in emsg:
+            return {
+                "name": "Google Drive",
+                "status": "EXPIRED",
+                "detail": "Token 已过期且无法刷新",
+                "expires": "已过期",
+                "fix": "重新运行 python scripts/googledrive_auth.py",
+            }
+        return {
+            "name": "Google Drive",
+            "status": "ERR",
+            "detail": str(e)[:100],
+            "expires": "—",
+            "fix": "检查网络或重新授权",
+        }
+
+
+def check_icloud() -> dict:
+    """检查 iCloud 账号认证状态"""
+    if not IC_ACCOUNT or not IC_PASSWORD:
+        return {
+            "name": "iCloud",
+            "status": "NOCONFIG",
+            "detail": "账号或密码未配置",
+            "expires": "—",
+            "fix": "在 config.py 中设置 ICLOUD_ACCOUNT 和 ICLOUD_PASSWORD",
+        }
+
+    try:
+        from pyicloud import PyiCloudService
+        import socket, os
+
+        os.environ.setdefault("USERNAME", "linhu")
+        os.environ.setdefault("USER", "linhu")
+        socket.setdefaulttimeout(15)
+
+        api = PyiCloudService(IC_ACCOUNT, IC_PASSWORD,
+                              cookie_directory=str(Path.home() / ".workbuddy" / "icloud_cookies"))
+        if api.requires_2fa:
+            return {
+                "name": "iCloud",
+                "status": "2FA",
+                "detail": f"账号: {IC_ACCOUNT}（需两步验证）",
+                "expires": "—",
+                "fix": "在 Apple ID 网站生成 App-Specific Password",
+            }
+        return {
+            "name": "iCloud",
+            "status": "OK",
+            "detail": f"账号: {IC_ACCOUNT}",
+            "expires": "长期有效（cookie 持久化）",
+            "fix": "无需操作",
+        }
+    except ImportError:
+        return {
+            "name": "iCloud",
+            "status": "NOINSTALL",
+            "detail": "pyicloud 未安装",
+            "expires": "—",
+            "fix": "pip install pyicloud",
+        }
+    except Exception as e:
+        emsg = str(e)
+        if "Invalid email/password" in emsg:
+            return {"name": "iCloud", "status": "BADPWD", "detail": "账号或密码错误", "expires": "—", "fix": "检查密码"}
+        if "Authentication required" in emsg or "Missing X-APPLE" in emsg:
+            return {"name": "iCloud", "status": "NETWORK", "detail": "认证失败（代理/网络问题）", "expires": "—", "fix": "检查代理规则，将 apple.com 设为直连"}
+        return {"name": "iCloud", "status": "ERR", "detail": str(e)[:100], "expires": "—", "fix": "检查网络或账号"}
+
+
 def main():
     use_json = "--json" in sys.argv
 
@@ -281,6 +418,8 @@ def main():
         check_p115(),
         check_quark(),
         check_aliyun(),
+        check_googledrive(),
+        check_icloud(),
     ]
 
     if use_json:

@@ -34,9 +34,11 @@ def _api_search(q: str, max_results: int) -> list:
         name = item.get("n", "")
         cid = str(item.get("cid", ""))
         pid = str(item.get("pid", ""))
+        parent_name = item.get("dp", "")
+        path = f"{parent_name}/{name}" if parent_name and parent_name != name else name
         results.append({
             "name": name,
-            "path": name,
+            "path": path,
             "is_dir": item.get("fc", 0) > 0,
             "size": item.get("s") or item.get("p", 0),
             "id": cid,
