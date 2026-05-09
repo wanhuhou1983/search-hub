@@ -1,12 +1,15 @@
 """
-xvideos handler — 解析与下载
+xvideos handler — 解析与下载，支持本地 + VPS 中转
 依赖: ffmpeg, Python requests
 """
 
 import asyncio
+import logging
 import os
 import re
 from pathlib import Path
+
+logger = logging.getLogger("search-hub.xvideos")
 
 FFMPEG = r"C:\Users\linhu\WorkBuddy\20260328095145\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe"
 DOWNLOAD_DIR = Path.home() / "Downloads" / "xvideos"
@@ -36,7 +39,6 @@ def _extract_hls(html: str) -> str | None:
         m = re.search(p, html)
         if m:
             url = m.group(1)
-            # 解码 HTML 实体
             url = url.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"')
             return url
     return None
@@ -52,74 +54,102 @@ def _extract_title(html: str) -> str:
 
 
 async def parse_url(video_url: str) -> dict:
-    """解析 xvideos URL，返回 HLS 地址和标题"""
+    """解析 xvideos URL，本地失败走 VPS"""
     if "xvideos" not in video_url.lower():
         return {"error": "无效的 xvideos URL"}
 
+    # 1) 本地解析
     try:
         html = await _fetch_url(video_url)
-    except asyncio.TimeoutError:
-        return {"error": "抓取超时"}
+        hls_url = _extract_hls(html)
+        if hls_url:
+            title = _extract_title(html)
+            return {
+                "success": True,
+                "hls_url": hls_url,
+                "title": title,
+                "url": video_url,
+            }
     except Exception as e:
-        return {"error": str(e)}
+        logger.info(f"XVideos 本地解析失败: {e}")
 
-    hls_url = _extract_hls(html)
-    if not hls_url:
-        return {"error": "未找到 HLS 流地址（页面可能需登录或已失效）"}
-
-    title = _extract_title(html)
-
-    return {
-        "success": True,
-        "hls_url": hls_url,
-        "title": title,
-        "url": video_url,
-    }
+    # 2) VPS 中转
+    try:
+        from handlers.vps_relay import relay_get_json
+        data = await relay_get_json("/api/xvideos/parse", {"url": video_url})
+        if "error" in data:
+            return {"error": f"本地和VPS解析均失败: {data.get('error', '未知')}"}
+        data["relay"] = True
+        return data
+    except Exception as e:
+        return {"error": f"本地和VPS解析均失败: {e}"}
 
 
 async def download_video(video_url: str) -> dict:
-    """下载 xvideos 视频到本地"""
+    """下载 xvideos 视频，本地失败走 VPS"""
     parsed = await parse_url(video_url)
     if "error" in parsed:
         return parsed
 
-    os.makedirs(str(DOWNLOAD_DIR), exist_ok=True)
-    output_path = DOWNLOAD_DIR / f"{parsed['title']}.mp4"
+    is_relay = parsed.get("relay", False)
+    hls_url = parsed["hls_url"]
+    title = parsed.get("title", "xv_video")
 
-    cmd = [
-        FFMPEG,
-        "-headers", "Referer: https://www.xvideos.com/",
-        "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "-i", parsed["hls_url"],
-        "-c", "copy",
-        "-bsf:a", "aac_adtstoasc",
-        str(output_path), "-y",
-    ]
+    # 1) 本地下载（非中转模式）
+    if not is_relay and os.path.exists(FFMPEG):
+        try:
+            os.makedirs(str(DOWNLOAD_DIR), exist_ok=True)
+            output_path = DOWNLOAD_DIR / f"{title}.mp4"
 
+            cmd = [
+                FFMPEG,
+                "-headers", "Referer: https://www.xvideos.com/",
+                "-user_agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "-i", hls_url,
+                "-c", "copy",
+                "-bsf:a", "aac_adtstoasc",
+                str(output_path), "-y",
+            ]
+
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=600)
+            log = stdout.decode("utf-8", errors="replace")
+
+            if proc.returncode == 0 and output_path.exists():
+                size = output_path.stat().st_size
+                return {
+                    "success": True,
+                    "file": str(output_path),
+                    "size": size,
+                    "size_mb": round(size / 1024 / 1024, 2),
+                }
+            logger.info(f"XVideos 本地下载失败: ffmpeg exit {proc.returncode}")
+        except Exception as e:
+            logger.info(f"XVideos 本地下载异常: {e}")
+
+    # 2) VPS 中转下载
     try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=600)
-        log = stdout.decode("utf-8", errors="replace")
-    except asyncio.TimeoutError:
-        return {"error": "下载超时（超过10分钟）"}
-    except FileNotFoundError:
-        return {"error": "ffmpeg 未找到"}
+        from handlers.vps_relay import relay_post_json, relay_download_file
+
+        data = await relay_post_json("/api/xvideos/download", {
+            "hls_url": hls_url,
+            "title": title,
+        })
+
+        if "error" in data:
+            return data
+
+        download_url = data.get("download_url", "")
+        if not download_url:
+            return {"error": "VPS 下载成功但未返回下载链接"}
+
+        local_path = DOWNLOAD_DIR / f"{title}.mp4"
+        result = await relay_download_file(download_url, local_path)
+        result["relay"] = True
+        return result
     except Exception as e:
-        return {"error": str(e)}
-
-    if proc.returncode != 0:
-        return {"error": f"ffmpeg 退出码 {proc.returncode}", "log": log[:500]}
-
-    if output_path.exists():
-        size = output_path.stat().st_size
-        return {
-            "success": True,
-            "file": str(output_path),
-            "size": size,
-            "size_mb": round(size / 1024 / 1024, 2),
-        }
-    return {"error": "下载完成但未找到输出文件"}
+        return {"error": f"本地和VPS下载均失败: {e}"}

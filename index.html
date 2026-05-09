@@ -404,11 +404,18 @@
 <!-- ====== 视频下载 Tab ====== -->
 <div class="tab-content" id="tab-videodl">
 
-  <!-- 站点切换 -->
-  <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+  <!-- 站点切换 + VPS中转状态 -->
+  <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;align-items:center">
     <button class="source-btn active" data-vsite="missav" onclick="switchVideoSite('missav', this)" style="font-size:14px;padding:6px 16px">🎬 MissAV</button>
     <button class="source-btn" data-vsite="xvideos" onclick="switchVideoSite('xvideos', this)" style="font-size:14px;padding:6px 16px">🔞 XVideos</button>
     <button class="source-btn" data-vsite="pornhub" onclick="switchVideoSite('pornhub', this)" style="font-size:14px;padding:6px 16px">🔞 PornHub</button>
+    <span style="margin-left:auto;font-size:12px;display:flex;align-items:center;gap:4px">
+      <span id="relayDot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#666"></span>
+      <span id="relayLabel" style="color:var(--text-dim)">VPS中转检测中...</span>
+    </span>
+  </div>
+  <div id="relayBanner" style="display:none;margin-bottom:12px;padding:8px 12px;background:#2a3a2a;border:1px solid #3a5a3a;border-radius:6px;font-size:12px;color:#8f8">
+    🔄 本地网络受限，已自动启用 VPS 中转 (107.175.49.215)
   </div>
 
   <!-- ====== MissAV 子面板 ====== -->
@@ -993,14 +1000,24 @@ async function missavParseUrl(url) {
     }
     const qualities = data.qualities || [];
     const title = data.title || url.split('/').pop();
-    let qualityHtml = qualities.length === 0
-      ? '<p style="color:var(--text-dim);margin-top:8px">⚠️ 无可用清晰度</p>'
-      : '<div class="quality-btns">' + qualities.map(q =>
+    const isRelay = data.relay || false;
+    let qualityHtml = '';
+    if (isRelay && data.m3u8) {
+      // VPS中转模式：使用 m3u8 地址下载
+      qualityHtml = '<div class="quality-btns">' +
+        `<button class="quality-btn" onclick="missavRelayDownload('${data.m3u8.replace(/'/g, "\\'")}','${(data.dvd_id || data.uuid || title).replace(/'/g, "\\'")}')">⬇ VPS中转下载</button>` +
+        '</div>';
+    } else if (qualities.length === 0) {
+      qualityHtml = '<p style="color:var(--text-dim);margin-top:8px">⚠️ 无可用清晰度</p>';
+    } else {
+      qualityHtml = '<div class="quality-btns">' + qualities.map(q =>
         `<button class="quality-btn" onclick="missavDownload('${data.uuid}','${q}')">⬇ ${q}</button>`
       ).join('') + '</div>';
+    }
+    const relayTag = isRelay ? '<span style="color:#8f8;font-size:11px;margin-left:8px">🔄 VPS中转</span>' : '';
     detailDiv.innerHTML = `
       <div class="missav-info">
-        <div class="title">🎬 ${title}</div>
+        <div class="title">🎬 ${title}${relayTag}</div>
         <div class="meta">UUID: ${data.uuid}</div>
         ${qualityHtml}
       </div>`;

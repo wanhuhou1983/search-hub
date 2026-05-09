@@ -45,6 +45,11 @@ class PornhubDownloadReq(BaseModel):
     url: str
     quality: str = "720p"
 
+class MissavRelayDownloadReq(BaseModel):
+    m3u8_url: str
+    filename: str
+    quality: str = "720p"
+
 # ─── 搜索源注册（存模块名/函数名，不 import） ───────────
 SEARCH_SOURCES = {
     "local":      {"module": "handlers.local",      "name": "本地文件"},
@@ -356,6 +361,34 @@ async def pornhub_download(data: PornhubDownloadReq):
     if mod is None:
         return JSONResponse({"error": "PornHub handler 加载失败"}, status_code=500)
     result = await mod.download_video(data.url, data.quality)
+    if "error" in result:
+        return JSONResponse(result, status_code=500)
+    return result
+
+
+# ─── VPS 中转状态检查 ─────────────────────────────
+
+@app.get("/api/relay/status")
+async def relay_status():
+    """检查 VPS 中转服务状态"""
+    mod = _load_module("handlers.vps_relay")
+    if mod is None:
+        return {"available": False, "error": "vps_relay 模块加载失败"}
+    ok = await mod.check_vps_relay()
+    cfg = _load_config()
+    relay_url = getattr(mod, "VPS_RELAY_URL", "unknown")
+    return {"available": ok, "url": relay_url}
+
+
+# ─── MissAV VPS 中转下载 ──────────────────────────
+
+@app.post("/api/missav/relay-download")
+async def missav_relay_download(data: MissavRelayDownloadReq):
+    """通过 VPS 中转下载 MissAV 视频"""
+    mod = _load_module("handlers.missav")
+    if mod is None:
+        return JSONResponse({"error": "MissAV handler 加载失败"}, status_code=500)
+    result = await mod.download_via_relay(data.m3u8_url, data.filename, data.quality)
     if "error" in result:
         return JSONResponse(result, status_code=500)
     return result
