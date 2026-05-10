@@ -19,8 +19,9 @@ from datetime import datetime
 from pathlib import Path
 from pydantic import BaseModel
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 logger = logging.getLogger("search-hub")
 
@@ -576,3 +577,18 @@ async def index():
                 else:
                     _INDEX_CACHE = "<h1>index.html not found</h1>"
     return _INDEX_CACHE
+
+
+# ─── 油猴脚本安装入口 ────────────────────────────────
+
+@app.get("/userscript.user.js")
+async def serve_userscript():
+    """提供油猴脚本文件，浏览器可直接安装"""
+    script_path = Path(__file__).parent / "userscripts" / "video-downloader.user.js"
+    if script_path.exists():
+        return FileResponse(
+            script_path,
+            media_type="text/javascript",
+            headers={"Content-Disposition": 'inline; filename="video-downloader.user.js"'},
+        )
+    return JSONResponse({"error": "油猴脚本文件不存在"}, status_code=404)
