@@ -1,3 +1,13 @@
+try:
+    import aiohttp
+except ImportError:
+    aiohttp = None
+
+try:
+    import httpx
+except ImportError:
+    httpx = None
+
 """
 统一搜索中心 - FastAPI 后端
 
@@ -18,7 +28,13 @@ import time
 from datetime import datetime
 from pathlib import Path
 from pydantic import BaseModel
-from fastapi import FastAPI, Query, Request
+
+
+class CredentialSaveReq(BaseModel):
+    key: str
+    content: str
+
+from fastapi import File, FastAPI, Query, Request, UploadFile, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -348,7 +364,7 @@ async def p115_proxy_m3u8(
 ):
     """代理115 m3u8请求，重写URL让ts分片也走代理"""
     import httpx
-    from urllib.parse import quote
+    from urllib.parse import quote, urljoin
 
     cfg = _load_config()
     cookie = cfg.get("P115_COOKIE", "")
@@ -555,6 +571,223 @@ async def missav_relay_download(data: MissavRelayDownloadReq):
         return JSONResponse(result, status_code=500)
     return result
 
+
+
+# ─── 凭据保存 ────────────────────────────────────────
+
+@app.post("/api/credentials/save")
+async def save_credential(req: CredentialSaveReq):
+    """保存网盘凭据到文件"""
+    KEY_MAP = {
+        "baidu_access_token":    (".workbuddy",  ".workbuddy/baidu_token"),
+        "p115_cookie":          (".workbuddy",  ".workbuddy/p115_cookie.txt"),
+        "quark_cookie":         (".workbuddy/skills/quark-storage", ".workbuddy/skills/quark-storage/quark_cookies.json"),
+        "google_drive_token":   (".workbuddy/skills/google-drive", ".workbuddy/skills/google-drive/googledrive_token.json"),
+    }
+    if req.key not in KEY_MAP:
+        return {"success": False, "error": f"未知凭据键: {req.key}"}
+
+    rel_dir, rel_path = KEY_MAP[req.key]
+    base = Path.home()
+    full_dir = base / rel_dir
+    full_path = base / rel_path
+    try:
+        full_dir.mkdir(parents=True, exist_ok=True)
+        full_path.write_text(req.content, encoding="utf-8")
+        return {"success": True, "file": str(full_path)}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+# ─── 重启服务 ────────────────────────────────────────
+
+@app.post("/api/restart")
+async def restart_service():
+    """优雅重启 (os.execv)"""
+    import sys
+    os.execv(sys.executable, [sys.executable, *sys.argv])
+
+
+# ─── MinerU PDF OCR ─────────────────────────────────
+
+async def proxy_pdf_ocr(file: UploadFile = File(...)):
+    """转发 PDF 到本机 MinerU 服务"""
+    MINERU_URL = "http://host.docker.internal:10002"
+    content = await file.read()
+    async with aiohttp.ClientSession() as session:
+        data = aiohttp.FormData()
+        data.add_field("file", content, filename=file.filename, content_type=file.content_type or "application/pdf")
+        async with session.post(f"{MINERU_URL}/api/ocr/pdf", data=data) as resp:
+            result = await resp.json()
+            return result
+
+
+# ─── Whisper 语音转文字 ──────────────────────────────
+
+async def proxy_transcribe(file: UploadFile = File(...)):
+    """转发音频到本机 Whisper 服务"""
+    WHISPER_URL = "http://host.docker.internal:8766"
+    content = await file.read()
+    async with aiohttp.ClientSession() as session:
+        data = aiohttp.FormData()
+        data.add_field("file", content, filename=file.filename, content_type=file.content_type or "audio/wav")
+        async with session.post(f"{WHISPER_URL}/api/transcribe", data=data) as resp:
+            result = await resp.json()
+            return result
+
+
+# ─── 视频流式代理下载 ─────────────────────────────────
+# 浏览器直接下载，不存服务器
+
+@app.get("/api/stream/download")
+async def stream_download(
+    url: str = Query("", description="视频URL (m3u8或mp4)"),
+    filename: str = Query("", description="下载文件名"),
+    referer: str = Query("https://www.xvideos.com/", description="Referer头"),
+):
+    if not url:
+        raise HTTPException(status_code=400, detail="缺少 url 参数")
+
+    safe_filename = filename or f"video_{os.urandom(4).hex()}.mp4"
+    safe_filename = "".join(c for c in safe_filename if c.isprintable() and c not in '<>:"/\\|?*')
+    if not safe_filename.endswith(".mp4"):
+        safe_filename += ".mp4"
+
+    log = logging.getLogger("uvicorn")
+    is_m3u8 = ".m3u8" in url.lower() or ".m3u" in url.lower()
+
+    if is_m3u8:
+        # Step 1: if multi-variant m3u8, extract the single best variant
+        ffmpeg_url = url
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                resp = await c.get(url, headers={"Referer": referer})
+                if resp.status_code == 200:
+                    body = resp.text
+                    # Check for EXT-X-STREAM-INF (multi-variant)
+                    if "#EXT-X-STREAM-INF" in body:
+                        # Find the last STREAM-INF line and its URL
+                        best_url = None
+                        best_bw = -1
+                        for line in body.splitlines():
+                            line = line.strip()
+                            if line.startswith("#EXT-X-STREAM-INF:"):
+                                # Parse BANDWIDTH
+                                for part in line.split(","):
+                                    part = part.strip()
+                                    if part.startswith("BANDWIDTH="):
+                                        try:
+                                            bw = int(part.split("=")[1])
+                                            if bw > best_bw:
+                                                best_bw = bw
+                                        except:
+                                            pass
+                            elif line and not line.startswith("#") and best_bw > 0:
+                                # This is a URL following STREAM-INF
+                                if line.startswith("http"):
+                                    best_url = line
+                                else:
+                                    # Relative URL - resolve against base
+                                    from urllib.parse import urljoin
+                                    best_url = urljoin(url, line)
+                                break
+                        if best_url:
+                            ffmpeg_url = best_url
+                            log.info(f"Multi-variant m3u8: selected variant {best_bw} bps")
+        except Exception as e:
+            log.warning(f"m3u8 probe failed, using original URL: {e}")
+
+        # Step 2: use yt-dlp for HLS streaming (handles Referer for segments)
+        ffmpeg = await asyncio.create_subprocess_exec(
+            "yt-dlp",
+            "-f", "b",
+            "--referer", referer,
+            "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "-o", "-",
+            ffmpeg_url,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+
+        # Probe: wait for first data before sending response headers
+        try:
+            first_chunk = await asyncio.wait_for(ffmpeg.stdout.read(65536), timeout=60)
+        except asyncio.TimeoutError:
+            try:
+                ffmpeg.kill()
+            except:
+                pass
+            try:
+                err = await asyncio.wait_for(ffmpeg.stderr.read(), timeout=2)
+                log.error(f"ffmpeg timeout: {err.decode('utf-8', errors='replace')[:500]}")
+            except:
+                pass
+            raise HTTPException(status_code=502, detail="ffmpeg 转码超时")
+
+        if not first_chunk:
+            try:
+                ffmpeg.kill()
+            except:
+                pass
+            try:
+                err = await asyncio.wait_for(ffmpeg.stderr.read(), timeout=2)
+                log.error(f"ffmpeg no output: {err.decode('utf-8', errors='replace')[:500]}")
+            except:
+                pass
+            raise HTTPException(status_code=502, detail="ffmpeg 未输出数据")
+
+        # Log stderr in background
+        async def _log_stderr():
+            try:
+                err = await ffmpeg.stderr.read()
+                text = err.decode("utf-8", errors="replace").strip()
+                if text:
+                    log.error(f"ffmpeg ({url[:60]}...): {text[:500]}")
+            except:
+                pass
+        asyncio.ensure_future(_log_stderr())
+
+        async def _ffmpeg_stream():
+            try:
+                yield first_chunk
+                while True:
+                    chunk = await ffmpeg.stdout.read(65536)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                try:
+                    try:
+                        ffmpeg.kill()
+                    except:
+                        pass
+                except:
+                    pass
+
+        return StreamingResponse(
+            _ffmpeg_stream(),
+            media_type="video/mp4",
+            headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'},
+        )
+    else:
+        # Direct URL: httpx proxy
+        async def _proxy_stream():
+            try:
+                async with httpx.AsyncClient(timeout=None) as client:
+                    async with client.stream("GET", url, headers={"Referer": referer}) as resp:
+                        if resp.status_code != 200:
+                            raise Exception(f"上游返回 {resp.status_code}")
+                        async for chunk in resp.aiter_bytes():
+                            yield chunk
+            except Exception as e:
+                log.error(f"httpx ({url[:60]}...): {e}")
+                raise
+
+        return StreamingResponse(
+            _proxy_stream(),
+            media_type="video/mp4",
+            headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'},
+        )
 
 # ═══════════════════════════════════════════════════════
 #  前端

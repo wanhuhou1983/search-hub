@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Video Downloader (PornHub / XVideos / MissAV)
 // @namespace    https://github.com/search-hub
-// @version      1.0.0
-// @description  在 PornHub / XVideos / MissAV 页面添加下载按钮，一键发送到本地 search-hub 服务下载
+// @version      1.1.0
+// @description  在 PornHub / XVideos / MissAV 页面添加下载按钮，通过 search-hub streaming 推流到本地浏览器
 // @author       UHUH
 // @match        https://www.pornhub.com/*
 // @match        https://www.xvideos.com/*
@@ -13,6 +13,7 @@
 // @grant        GM_addStyle
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        GM_download
 // @connect      localhost
 // @connect      127.0.0.1
 // @connect      *
@@ -190,7 +191,7 @@
         method: 'GET',
         url: `${serverUrl}${endpoint}`,
         responseType: 'json',
-        timeout: 30000,
+        timeout: 45000,
         onload: (resp) => {
           if (resp.status >= 200 && resp.status < 300) {
             resolve(typeof resp.response === 'string' ? JSON.parse(resp.response) : resp.response);
@@ -198,41 +199,18 @@
             reject(new Error(`HTTP ${resp.status}`));
           }
         },
-        onerror: () => reject(new Error(`网络错误，请确认 search-hub 服务已启动`)),
-        ontimeout: () => reject(new Error('请求超时 (30s)')),
+        onerror: () => reject(new Error('网络错误，请确认 search-hub 服务已启动')),
+        ontimeout: () => reject(new Error('解析请求超时 (45s)')),
       });
     });
   }
 
-  function apiPost(serverUrl, endpoint, body) {
-    return new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({
-        method: 'POST',
-        url: `${serverUrl}${endpoint}`,
-        data: JSON.stringify(body),
-        headers: { 'Content-Type': 'application/json' },
-        responseType: 'json',
-        timeout: 300000,
-        onload: (resp) => {
-          if (resp.status >= 200 && resp.status < 300) {
-            resolve(typeof resp.response === 'string' ? JSON.parse(resp.response) : resp.response);
-          } else {
-            const msg = resp.response?.error || `HTTP ${resp.status}`;
-            reject(new Error(msg));
-          }
-        },
-        onerror: () => reject(new Error(`网络错误，请确认 search-hub 服务已启动`)),
-        ontimeout: () => reject(new Error('请求超时 (300s)，下载可能仍在进行')),
-      });
-    });
-  }
-
-  function notify(title, text, highlight = 'error') {
-    GM_notification({ title, text, highlight, timeout: 3000 });
+  function notify(title, text, highlight) {
+    GM_notification({ title, text, highlight: highlight || 'error', timeout: 3000 });
   }
 
   // ═══════════════════════════════════════════════
-  //  站点检测 & 视频信息提取
+  //  站点检测
   // ═══════════════════════════════════════════════
   function detectSite() {
     if (host.includes('pornhub')) return 'pornhub';
@@ -241,9 +219,7 @@
     return null;
   }
 
-  function getVideoUrl() {
-    return location.href;
-  }
+  function getVideoUrl() { return location.href; }
 
   function getVideoTitle() {
     if (detectSite() === 'pornhub') {
@@ -262,166 +238,145 @@
   }
 
   // ═══════════════════════════════════════════════
-  //  UI 创建
+  //  UI
   // ═══════════════════════════════════════════════
   let panel = null;
   let btn = null;
+  let _parseData = null;
 
   function createUI() {
-    // 下载按钮
     btn = document.createElement('button');
     btn.className = 'uhuh-dl-btn';
     btn.innerHTML = '⬇ 下载';
     btn.onclick = togglePanel;
     document.body.appendChild(btn);
 
-    // 面板
     panel = document.createElement('div');
     panel.className = 'uhuh-panel';
     panel.style.display = 'none';
-    panel.innerHTML = `
-      <h3>📥 Video Downloader</h3>
-      <div class="uhuh-info">
-        <div class="title" id="uhuh-title">${getVideoTitle()}</div>
-        <div class="meta" id="uhuh-meta">${location.href}</div>
-      </div>
-      ${detectSite() === 'pornhub' ? `
-        <select id="uhuh-quality">
-          <option value="1080p">1080p</option>
-          <option value="720p" selected>720p</option>
-          <option value="480p">480p</option>
-        </select>
-      ` : ''}
-      ${detectSite() === 'missav' ? `
-        <select id="uhuh-quality">
-          <option value="1080p">1080p</option>
-          <option value="720p" selected>720p</option>
-          <option value="480p">480p</option>
-          <option value="360p">360p</option>
-        </select>
-      ` : ''}
-      <div class="uhuh-actions">
-        <button class="btn-primary" id="uhuh-dl-action" onclick="window._uhuhDownload()">⬇ 下载</button>
-        <button class="btn-secondary" onclick="window._uhuhCopyUrl()">📋 复制链接</button>
-      </div>
-      <div class="uhuh-log" id="uhuh-log"></div>
-      <div class="uhuh-settings">
-        <label>Search-Hub 地址:</label>
-        <input type="text" id="uhuh-server" value="${GM_getValue('searchHubUrl', DEFAULT_SERVER)}">
-      </div>
-    `;
+    let qualityHtml = '';
+    if (detectSite() === 'pornhub') qualityHtml = `<select id="uhuh-quality"><option value="1080p">1080p</option><option value="720p" selected>720p</option><option value="480p">480p</option></select>`;
+    if (detectSite() === 'missav') qualityHtml = `<select id="uhuh-quality"><option value="1080p">1080p</option><option value="720p" selected>720p</option><option value="480p">480p</option><option value="360p">360p</option></select>`;
+    panel.innerHTML = '<h3>📥 Video Downloader</h3>' +
+      '<div class="uhuh-info"><div class="title" id="uhuh-title">' + getVideoTitle() + '</div><div class="meta">' + location.href + '</div></div>' +
+      qualityHtml +
+      '<div class="uhuh-actions"><button class="btn-primary" onclick="window._uhuhDownload()">⬇ 下载</button><button class="btn-secondary" onclick="window._uhuhCopyUrl()">📋 复制链接</button></div>' +
+      '<div class="uhuh-log" id="uhuh-log"></div>' +
+      '<div class="uhuh-settings"><label>Search-Hub 地址:</label><input type="text" id="uhuh-server" value="' + GM_getValue('searchHubUrl', DEFAULT_SERVER) + '"></div>';
     document.body.appendChild(panel);
 
-    // 暴露到 window
     window._uhuhDownload = doDownload;
     window._uhuhCopyUrl = copyUrl;
   }
 
   function togglePanel() {
-    if (!panel) return;
     panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+    if (panel.style.display === 'block' && !_parseData) autoParse();
   }
 
   function log(msg) {
-    const el = document.getElementById('uhuh-log');
+    var el = document.getElementById('uhuh-log');
     if (el) el.textContent += msg + '\n';
     console.log('[UHUH-DL]', msg);
   }
 
   function setBtnState(state, text) {
     if (!btn) return;
-    btn.className = 'uhuh-dl-btn' + (state ? ` ${state}` : '');
+    btn.className = 'uhuh-dl-btn' + (state ? ' ' + state : '');
     if (state === 'downloading') {
-      btn.innerHTML = `<span class="uhuh-dl-spinner"></span>${text || '下载中...'}`;
+      btn.innerHTML = '<span class="uhuh-dl-spinner"></span>' + (text || '处理中...');
     } else {
       btn.innerHTML = text || '⬇ 下载';
     }
   }
 
   // ═══════════════════════════════════════════════
-  //  下载动作
+  //  解析
+  // ═══════════════════════════════════════════════
+  async function autoParse() {
+    setBtnState('downloading', '解析中...');
+    var site = detectSite();
+    var serverUrl = getServer();
+    log('解析: ' + getVideoUrl());
+    try {
+      var endpoint = '/api/' + site + '/parse';
+      var resp = await apiGet(serverUrl, endpoint + '?url=' + encodeURIComponent(getVideoUrl()));
+      if (resp.error) throw new Error(resp.error);
+      _parseData = resp;
+      log('成功: ' + (resp.title || ''));
+      if (resp.qualities) log('画质: ' + resp.qualities.join(', '));
+      setBtnState('', '⬇ 下载');
+    } catch (e) {
+      setBtnState('error', '❌ 解析失败');
+      log('错误: ' + e.message);
+      setTimeout(function() { setBtnState('', '⬇ 下载'); }, 5000);
+    }
+  }
+
+  // ═══════════════════════════════════════════════
+  //  流式下载
   // ═══════════════════════════════════════════════
   async function doDownload() {
-    const site = detectSite();
-    const url = getVideoUrl();
-    const serverUrl = getServer();
+    if (!_parseData) {
+      await autoParse();
+      if (!_parseData) return;
+    }
 
-    setBtnState('downloading', '解析中...');
-    log(`开始解析: ${url}`);
+    setBtnState('downloading', '流式下载中...');
 
     try {
-      let result;
+      var site = detectSite();
+      var serverUrl = getServer();
+      var title = _parseData.title || getVideoTitle() || 'video';
+      var streamUrl = '';
 
-      if (site === 'pornhub') {
-        const quality = document.getElementById('uhuh-quality')?.value || '720p';
-        log(`调用 search-hub 解析 PornHub...`);
-        const parseResp = await apiGet(serverUrl, `/api/pornhub/parse?url=${encodeURIComponent(url)}`);
-        if (parseResp.error) throw new Error(parseResp.error);
-        log(`标题: ${parseResp.title || '未知'} | 时长: ${parseResp.duration_str || '未知'}`);
-
-        setBtnState('downloading', '下载中...');
-        log(`开始下载 (${quality})...`);
-        result = await apiPost(serverUrl, '/api/pornhub/download', { url, quality });
-
-      } else if (site === 'xvideos') {
-        log(`调用 search-hub 解析 XVideos...`);
-        const parseResp = await apiGet(serverUrl, `/api/xvideos/parse?url=${encodeURIComponent(url)}`);
-        if (parseResp.error) throw new Error(parseResp.error);
-        log(`标题: ${parseResp.title || '未知'}`);
-
-        setBtnState('downloading', '下载中...');
-        log(`开始下载...`);
-        result = await apiPost(serverUrl, '/api/xvideos/download', { url });
-
-      } else if (site === 'missav') {
-        const quality = document.getElementById('uhuh-quality')?.value || '720p';
-        log(`调用 search-hub 解析 MissAV...`);
-        const parseResp = await apiGet(serverUrl, `/api/missav/parse?url=${encodeURIComponent(url)}`);
-        if (parseResp.error) throw new Error(parseResp.error);
-        log(`UUID: ${parseResp.uuid || '未知'} | 画质: ${parseResp.qualities?.join(',') || '未知'}`);
-
-        if (!parseResp.uuid) throw new Error('解析成功但未获取到 UUID');
-        setBtnState('downloading', '下载中...');
-        log(`开始下载 (${quality})...`);
-        result = await apiPost(serverUrl, '/api/missav/download', { uuid: parseResp.uuid, quality });
-      }
-
-      if (result && result.error) {
-        throw new Error(result.error);
-      }
-
-      if (result && result.success) {
-        setBtnState('success', '✅ 完成');
-        log(`下载完成! 文件: ${result.file || result.path || '未知'}`);
-        if (result.size_mb) log(`文件大小: ${result.size_mb} MB`);
-        notify('下载完成', `${result.file || result.path}`, 'success');
-        setTimeout(() => setBtnState('', '⬇ 下载'), 5000);
+      if (site === 'missav') {
+        var quality = (document.getElementById('uhuh-quality') && document.getElementById('uhuh-quality').value) || '720p';
+        if (!_parseData.hls_url) throw new Error('未获取到视频流地址');
+        var qUrl = _parseData.hls_url.replace('/720p/', '/' + quality + '/');
+        streamUrl = serverUrl + '/api/stream/download?url=' + encodeURIComponent(qUrl) + '&filename=' + encodeURIComponent(title + '.mp4') + '&referer=' + encodeURIComponent('https://missav.live/');
+      } else if (site === 'pornhub' || site === 'xvideos') {
+        if (!_parseData.hls_url) throw new Error('未获取到视频流地址');
+        streamUrl = serverUrl + '/api/stream/download?url=' + encodeURIComponent(_parseData.hls_url) + '&filename=' + encodeURIComponent(title + '.mp4') + '&referer=' + encodeURIComponent(getVideoUrl());
       } else {
-        throw new Error('未知返回: ' + JSON.stringify(result));
+        throw new Error('不支持的站点');
       }
 
-    } catch (err) {
+      log('流式下载: ' + streamUrl.substring(0, 100) + '...');
+
+      // 开新标签页下载
+      var w = window.open(streamUrl, '_blank');
+      if (!w) {
+        log('⚠️ 弹窗被拦截，请允许此站点弹窗');
+        notify('弹窗被拦截', '请允许此站点弹窗以触发下载');
+        setBtnState('', '⬇ 下载');
+      } else {
+        setBtnState('success', '✅ 已发起');
+        log('下载已发起，请查看新标签页');
+        notify('下载已发起', title + '.mp4', 'info');
+        setTimeout(function() { setBtnState('', '⬇ 下载'); }, 5000);
+      }
+    } catch (e) {
       setBtnState('error', '❌ 失败');
-      log(`错误: ${err.message}`);
-      notify('下载失败', err.message);
-      setTimeout(() => setBtnState('', '⬇ 下载'), 5000);
+      log('错误: ' + e.message);
+      notify('下载失败', e.message);
+      setTimeout(function() { setBtnState('', '⬇ 下载'); }, 5000);
     }
   }
 
   function copyUrl() {
-    const url = getVideoUrl();
-    navigator.clipboard.writeText(url).then(() => {
+    var url = getVideoUrl();
+    navigator.clipboard.writeText(url).then(function() {
       notify('已复制', url, 'info');
-      log('URL 已复制到剪贴板');
-    }).catch(() => {
-      // fallback
-      const input = document.createElement('input');
+      log('URL 已复制');
+    })['catch'](function() {
+      var input = document.createElement('input');
       input.value = url;
       document.body.appendChild(input);
       input.select();
       document.execCommand('copy');
       document.body.removeChild(input);
-      log('URL 已复制到剪贴板');
+      log('URL 已复制');
     });
   }
 
@@ -429,7 +384,6 @@
   //  启动
   // ═══════════════════════════════════════════════
   if (detectSite()) {
-    // 等页面加载完毕
     if (document.readyState === 'complete') {
       createUI();
     } else {

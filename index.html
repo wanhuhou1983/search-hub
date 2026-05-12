@@ -379,6 +379,7 @@
   <div class="tabs">
     <button class="tab-btn active" onclick="switchTab('search')">🔎 搜索</button>
     <button class="tab-btn" onclick="switchTab('videodl')">🎬 视频下载</button>
+    <button class="tab-btn" onclick="switchTab('tools')">🛠️ 工具</button>
     <button class="tab-btn" onclick="switchTab('settings')">🔧 设置</button>
   </div>
 
@@ -484,6 +485,41 @@
 
 </div><!-- /tab-videodl -->
 
+<!-- ====== 工具 Tab ====== -->
+<div class="tab-content" id="tab-tools">
+
+  <!-- ====== MinerU PDF/OCR panel ====== -->
+  <h3 style="margin-bottom:12px;font-size:16px;margin-top:0">📑 MinerU PDF 解析</h3>
+  <div style="margin-bottom:24px">
+    <div style="font-size:13px;color:var(--text-dim);margin-bottom:10px">
+      💡 上传 PDF 文件，使用本机 MinerU 进行 OCR 解析（支持图片型PDF和扫描件）
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <input type="file" id="pdfInput" accept=".pdf" style="flex:1;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--search-bg);color:var(--text)">
+      <button onclick="processPdf()" id="pdfBtn" class="search-btn" style="padding:10px 20px;font-size:14px">🔄 解析 PDF</button>
+    </div>
+    <div id="pdfResult" style="margin-top:12px;font-size:13px;color:var(--text-dim)"></div>
+    <div id="pdfContent" style="margin-top:8px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:8px;font-size:13px;line-height:1.6;display:none;max-height:400px;overflow:auto;white-space:pre-wrap"></div>
+  </div>
+
+  <hr style="border:0;border-top:1px solid var(--border);margin:20px 0">
+
+  <!-- ====== Whisper panel ====== -->
+  <h3 style="margin-bottom:12px;font-size:16px">🎙️ Whisper 语音转文字</h3>
+  <div style="margin-bottom:20px">
+    <div style="font-size:13px;color:var(--text-dim);margin-bottom:10px">
+      💡 上传音频文件（wav/mp3/m4a/ogg），使用本机 Whisper large-v3 模型进行语音识别
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <input type="file" id="audioInput" accept=".wav,.mp3,.m4a,.ogg,.flac" style="flex:1;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--search-bg);color:var(--text)">
+      <button onclick="transcribeAudio()" id="audioBtn" class="search-btn" style="padding:10px 20px;font-size:14px">🎤 转写</button>
+    </div>
+    <div id="audioResult" style="margin-top:12px;font-size:13px;color:var(--text-dim)"></div>
+    <div id="audioContent" style="margin-top:8px;padding:12px;background:var(--card);border:1px solid var(--border);border-radius:8px;font-size:13px;line-height:1.6;display:none;max-height:400px;overflow:auto;white-space:pre-wrap"></div>
+  </div>
+
+</div><!-- /tab-tools -->
+
 <!-- ====== 设置 Tab ====== -->
 <div class="tab-content" id="tab-settings">
 
@@ -540,7 +576,7 @@
 // ========== 状态 ==========
 let activeSources = new Set(['all']);
 const SOURCE_NAMES = {
-  local:  { name: '本地文件', icon: '💻' },
+  local:  { name: '本机文件(S1)', icon: '💻' },
   obsidian: { name: 'Obsidian', icon: '📝' },
   baidu:  { name: '百度网盘', icon: '☁️' },
   p115:   { name: '115网盘', icon: '☁️' },
@@ -548,7 +584,7 @@ const SOURCE_NAMES = {
   aliyun: { name: '阿里云盘', icon: '☁️' },
   zlib:   { name: 'Z-Library', icon: '📚' },
   googledrive: { name: 'Google Drive', icon: '☁️' },
-  icloud:  { name: 'iCloud Drive', icon: '☁️' },
+  icloud:  { name: 'iCloud', icon: '☁️' },
 };
 
 const SOURCE_ICONS = {
@@ -1090,6 +1126,7 @@ function switchTab(name) {
   if (tab) tab.classList.add('active');
   // 切到设置 Tab 时自动检查 Token
   if (name === 'settings') loadTokenStatus();
+  if (name === 'tools') loadToolsTab();
 }
 function switchVideoSite(name, btn) {
   document.querySelectorAll('.source-btn[data-vsite]').forEach(b => b.classList.remove('active'));
@@ -1126,9 +1163,11 @@ async function xvideosParse() {
       btn.disabled = false;
       return;
     }
+    window._xvHlsUrl = data.hls_url;
+    window._xvTitle = data.title;
     document.getElementById('xvideosTitle').textContent = `🎬 ${data.title}`;
     infoDiv.style.display = 'block';
-    logDiv.textContent = `✅ 解析成功！HLS: ${data.hls_url.substring(0, 60)}...`;
+    logDiv.textContent = '✅ 解析成功！点「下载」直接保存到本机';
   } catch (e) {
     logDiv.textContent = `❌ 解析失败: ${e.message}`;
   }
@@ -1136,29 +1175,13 @@ async function xvideosParse() {
 }
 
 async function xvideosDownload() {
-  if (!_xvideosUrl) return;
-  const logDiv = document.getElementById('xvideosLog');
-  const btn = document.getElementById('xvideosDlBtn');
-
-  btn.disabled = true;
-  logDiv.textContent = '⏳ 下载中... 请耐心等待\n';
-
-  try {
-    const r = await fetch('/api/xvideos/download', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: _xvideosUrl }),
-    });
-    const data = await r.json();
-    if (data.success) {
-      logDiv.textContent += `\n✅ 下载完成!\n文件: ${data.file}\n大小: ${data.size_mb} MB`;
-    } else {
-      logDiv.textContent += `\n❌ 失败: ${data.error}`;
-    }
-  } catch (e) {
-    logDiv.textContent += `\n❌ 错误: ${e.message}`;
+  if (!window._xvHlsUrl) {
+    alert('请先解析视频');
+    return;
   }
-  btn.disabled = false;
+  const url = encodeURIComponent(window._xvHlsUrl);
+  const name = encodeURIComponent((window._xvTitle || 'xv_video') + '.mp4');
+  window.open('/api/stream/download?url=' + url + '&filename=' + name);
 }
 
 // ========== PornHub 解析 + 下载 ==========
@@ -1199,30 +1222,13 @@ async function pornhubParse() {
 }
 
 async function pornhubDownload() {
-  if (!_pornhubUrl) return;
-  const quality = document.getElementById('pornhubQuality').value;
-  const logDiv = document.getElementById('pornhubLog');
-  const btn = document.getElementById('pornhubDlBtn');
-
-  btn.disabled = true;
-  logDiv.textContent = `⏳ 下载中 (${quality})... 请耐心等待\n`;
-
-  try {
-    const r = await fetch('/api/pornhub/download', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: _pornhubUrl, quality }),
-    });
-    const data = await r.json();
-    if (data.success) {
-      logDiv.textContent += `\n✅ 下载完成!\n文件: ${data.file}\n大小: ${data.size_mb} MB`;
-    } else {
-      logDiv.textContent += `\n❌ 失败: ${data.error}`;
-    }
-  } catch (e) {
-    logDiv.textContent += `\n❌ 错误: ${e.message}`;
+  if (!window._phHlsUrl) {
+    alert('请先解析视频');
+    return;
   }
-  btn.disabled = false;
+  const url = encodeURIComponent(window._phHlsUrl);
+  const name = encodeURIComponent((window._phTitle || 'ph_video') + '.mp4');
+  window.open('/api/stream/download?url=' + url + '&filename=' + name);
 }
 
 // ========== MissAV 搜索 + 解析 + 下载 ==========
@@ -1287,9 +1293,20 @@ async function missavParseUrl(url) {
     const qualities = data.qualities || [];
     const title = data.title || url.split('/').pop();
     const isRelay = data.relay || false;
+
+    // Store parsed data globally for download
+    window._missavHlsUrl = data.hls_url || '';
+    window._missavUuid = data.uuid || '';
+    window._missavTitle = title;
+
     let qualityHtml = '';
-    if (isRelay && data.m3u8) {
-      // VPS中转模式：使用 m3u8 地址下载
+    if (data.hls_url) {
+      // 本地解析成功：直接流式下载
+      qualityHtml = '<div class="quality-btns">' + qualities.map(q => {
+        const qUrl = data.hls_url.replace('/720p/', '/' + q + '/');
+        return `<button class="quality-btn" onclick="missavStreamDl('${qUrl.replace(/'/g, "\\'")}','${title.replace(/'/g, "\\'")}')">⬇ ${q}</button>`;
+      }).join('') + '</div>';
+    } else if (isRelay && data.m3u8) {
       qualityHtml = '<div class="quality-btns">' +
         `<button class="quality-btn" onclick="missavRelayDownload('${data.m3u8.replace(/'/g, "\\'")}','${(data.dvd_id || data.uuid || title).replace(/'/g, "\\'")}')">⬇ VPS中转下载</button>` +
         '</div>';
@@ -1313,9 +1330,14 @@ async function missavParseUrl(url) {
 }
 
 async function missavDownload(uuid, quality) {
-  const logDiv = document.getElementById('missavLog');
-  logDiv.textContent = '⏳ 下载中... 请耐心等待（大文件需要几分钟）\n';
-
+  // Try streaming via hls_url first
+  if (window._missavHlsUrl) {
+    const qUrl = window._missavHlsUrl.replace('/720p/', '/' + quality + '/');
+    const name = encodeURIComponent((window._missavTitle || 'missav_video') + '.mp4');
+    window.open('/api/stream/download?url=' + encodeURIComponent(qUrl) + '&filename=' + name);
+    return;
+  }
+  // Fallback: use uuid to call server-side download
   try {
     const r = await fetch('/api/missav/download', {
       method: 'POST',
@@ -1324,12 +1346,12 @@ async function missavDownload(uuid, quality) {
     });
     const data = await r.json();
     if (data.success) {
-      logDiv.textContent += `\n✅ 下载完成!\n文件: ${data.file}\n大小: ${data.size_mb} MB`;
+      alert('✅ 已下载到服务器: ' + (data.file || ''));
     } else {
-      logDiv.textContent += `\n❌ 失败: ${data.error}`;
+      alert('❌ 失败: ' + (data.error || '未知'));
     }
   } catch (e) {
-    logDiv.textContent += `\n❌ 错误: ${e.message}`;
+    alert('❌ 错误: ' + e.message);
   }
 }
 
@@ -1351,6 +1373,15 @@ async function loadTokenStatus() {
   const bar = document.getElementById('tokenStatusBar');
   const cards = document.getElementById('tokenCards');
 
+  const CREDENTIAL_MAP = {
+    '百度网盘': { key: 'baidu_access_token', label: 'BAIDU_ACCESS_TOKEN', inputType: 'text', placeholder: '粘贴 Access Token' },
+    '115网盘': { key: 'p115_cookie', label: 'P115_COOKIE', inputType: 'textarea', placeholder: '粘贴完整 Cookie 字符串' },
+    '夸克网盘': { key: 'quark_cookie', label: '夸克 Cookie 文件内容', inputType: 'textarea', placeholder: '粘贴 quark_cookies.json 的全部 JSON' },
+    'Google Drive': { key: 'google_drive_token', label: 'Google Drive Token', inputType: 'textarea', placeholder: '粘贴 googledrive_token.json 的全部内容' },
+    '阿里云盘': { cmdOnly: true, instruction: '运行 aliyun login --token <refresh_token>' },
+    'iCloud': { cmdOnly: true, instruction: '设置 ICLOUD_ACCOUNT 和 ICLOUD_PASSWORD 环境变量' }
+  };
+
   try {
     const r = await fetch('/api/token/status');
     const data = await r.json();
@@ -1358,36 +1389,122 @@ async function loadTokenStatus() {
 
     let ok = 0, total = checks.length;
     cards.innerHTML = '';
+
     for (const c of checks) {
-      const st = STATUS_MAP[c.status] || { icon: '❓', label: c.status, cls: 'warn' };
-      if (c.status === 'OK') ok++;
+      const isOK = c.status === 'OK';
+      if (isOK) ok++;
 
       const card = document.createElement('div');
       card.className = 'source-group';
       card.style.marginBottom = '10px';
-      card.innerHTML = `
-        <div class="source-header" style="cursor:default">
-          <div class="name">
-            <span>${st.icon}</span>
-            <span>${c.name}</span>
-            <span class="${st.cls === 'error' ? 'error-badge' : st.cls === 'warn' ? 'error-badge' : 'badge'}" style="${st.cls === 'warn' ? 'background:var(--warn);color:#0a0a23' : ''}">${st.label}</span>
-          </div>
-          <div style="font-size:12px;color:var(--text-dim)">${c.expires || ''}</div>
-        </div>
-        <div style="padding:12px 18px;font-size:13px">
-          <div style="color:var(--text)">${c.detail || '—'}</div>
-          ${c.fix && c.status !== 'OK' ? `<div style="color:var(--warn);margin-top:4px;font-size:12px">💡 ${c.fix}</div>` : ''}
-        </div>
-      `;
+
+      const icon = isOK ? '🟢' : '🔴';
+      const label = isOK ? '有效' : (c.status === 'NONE' ? '未配置' : '异常');
+      const badgeCls = isOK ? 'badge' : 'error-badge';
+
+      card.innerHTML = [
+        '<div class="source-header" style="cursor:default">',
+          '<div class="name">',
+            '<span>' + icon + '</span>',
+            '<span>' + c.name + '</span>',
+            '<span class="' + badgeCls + '">' + label + '</span>',
+          '</div>',
+          '<div style="font-size:12px;color:var(--text-dim)">' + (c.expires || '') + '</div>',
+        '</div>',
+        '<div style="padding:12px 18px;font-size:13px">',
+          '<div style="color:var(--text)">' + (c.detail || '—') + '</div>',
+          (c.fix && !isOK ? '<div style="color:var(--warn);margin-top:4px;font-size:12px">💡 ' + c.fix + '</div>' : ''),
+        '</div>',
+      ].join('');
+
+      if (!isOK) {
+        const field = CREDENTIAL_MAP[c.name];
+        if (field && !field.cmdOnly) {
+          const inputArea = document.createElement('div');
+          inputArea.style.padding = '12px 18px';
+          inputArea.style.borderTop = '1px solid var(--border)';
+          const inputId = 'cred-input-' + field.key;
+          const msgId = 'cred-msg-' + field.key;
+          if (field.inputType === 'textarea') {
+            inputArea.innerHTML = '<textarea id="' + inputId + '" style="width:100%;min-height:80px;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--search-bg);color:var(--text);font-size:13px;font-family:monospace;resize:vertical;outline:none" placeholder="' + field.placeholder + '"></textarea>';
+          } else {
+            inputArea.innerHTML = '<input type="text" id="' + inputId + '" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--search-bg);color:var(--text);font-size:13px;outline:none" placeholder="' + field.placeholder + '" />';
+          }
+          inputArea.innerHTML += '<div style="margin-top:8px;display:flex;gap:8px;align-items:center">' +
+            '<button onclick="saveNetdiskCredential(\'' + field.key + '\')" class="source-btn" style="padding:6px 16px;color:var(--accent);border-color:var(--accent)">💾 保存</button>' +
+            '<span id="' + msgId + '" style="font-size:12px;color:var(--text-dim)"></span>' +
+            '</div>';
+          card.appendChild(inputArea);
+        } else if (field && field.cmdOnly) {
+          const tipArea = document.createElement('div');
+          tipArea.style.padding = '12px 18px';
+          tipArea.style.borderTop = '1px solid var(--border)';
+          tipArea.style.fontSize = '12px';
+          tipArea.style.color = 'var(--warn)';
+          tipArea.textContent = '💡 ' + field.instruction;
+          card.appendChild(tipArea);
+        }
+      }
       cards.appendChild(card);
     }
 
-    bar.innerHTML = `<span>${ok}/${total} 个网盘认证正常</span>`;
+    bar.innerHTML = '<span>' + ok + '/' + total + ' 个网盘认证正常</span>';
+    const restartRow = document.createElement('div');
+    restartRow.style.marginTop = '16px';
+    restartRow.innerHTML = '<button onclick="restartService()" class="source-btn" style="padding:10px 24px;font-size:14px;color:var(--warn);border-color:var(--warn)">🔄 重启服务</button>';
+    cards.appendChild(restartRow);
   } catch (e) {
-    bar.innerHTML = `<span class="error">❌ 检查失败: ${e.message}</span>`;
+    bar.innerHTML = '<span class="error">❌ 检查失败: ' + e.message + '</span>';
   }
 }
 
-// ========== 视频站点子面板切换 ==========</script>
+// ========== 网盘凭据保存 ==========
+async function saveNetdiskCredential(key) {
+  const input = document.getElementById('cred-input-' + key);
+  const msg = document.getElementById('cred-msg-' + key);
+  if (!input || !msg) return;
+  const content = input.value.trim();
+  if (!content) { msg.innerHTML = '<span style="color:var(--err)">⚠️ 请先输入</span>'; return; }
+  msg.innerHTML = '<span class="loading">⏳ 保存中...</span>';
+  try {
+    const r = await fetch('/api/credentials/save', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key: key, content: content })
+    });
+    const data = await r.json();
+    if (data.success) {
+      msg.innerHTML = '<span style="color:var(--accent)">✅ 已保存</span>';
+      setTimeout(loadTokenStatus, 1000);
+    } else {
+      msg.innerHTML = '<span style="color:var(--err)">❌ ' + (data.error || '保存失败') + '</span>';
+    }
+  } catch(e) { msg.innerHTML = '<span style="color:var(--err)">❌ ' + e.message + '</span>'; }
+}
+
+async function restartService() {
+  if (!confirm('确定要重启 search-hub 服务吗？')) return;
+  const bar = document.getElementById('tokenStatusBar');
+  bar.innerHTML = '<span class="loading">🔄 服务重启中，请在5秒后刷新页面...</span>';
+  try {
+    await fetch('/api/restart', { method: 'POST' });
+  } catch(e) {}
+}
+
+
+// ========== 工具 Tab 初始化 ==========
+function loadToolsTab() {
+  // MinerU PDF and Whisper are pre-rendered, no extra init needed
+}
+// ========== 视频站点子面板切换 ==========
+
+// Stream missav video directly to browser
+async function missavStreamDl(url, title) {
+  const name = encodeURIComponent((title || 'missav_video') + '.mp4');
+  window.open('/api/stream/download?url=' + encodeURIComponent(url)
+    + '&referer=' + encodeURIComponent('https://missav.live/')
+    + '&filename=' + name);
+}
+</script>
 </body>
 </html>

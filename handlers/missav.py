@@ -87,44 +87,58 @@ async def parse_url(missav_url: str) -> dict:
     if not missav_url or "missav" not in missav_url.lower():
         return {"error": "无效的 MissAV URL"}
 
-    # 1) 本地解析
+    # 1) 本地解析（curl 抓页面 + node 提取 UUID）
     local_ok = False
     if EXTRACT_SCRIPT.exists():
         try:
-            proc = await asyncio.create_subprocess_exec(
-                "node", str(EXTRACT_SCRIPT), missav_url,
+            # Step 1: curl 抓页面（必须带 Referer 绕过 Cloudflare）
+            curl_proc = await asyncio.create_subprocess_exec(
+                "curl", "-s", "-L",
+                "-H", "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "-H", "Referer: https://missav.live/",
+                missav_url,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            html, _ = await asyncio.wait_for(curl_proc.communicate(), timeout=20)
+            if not html.strip():
+                raise Exception("curl 返回空页面")
+
+            # Step 2: pipe HTML 到 node 提取 UUID
+            node_proc = await asyncio.create_subprocess_exec(
+                "node", str(EXTRACT_SCRIPT),
+                stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            stdout, stderr = await asyncio.wait_for(
+                node_proc.communicate(input=html), timeout=15
+            )
             out = stdout.decode("utf-8", errors="replace")
-            err = stderr.decode("utf-8", errors="replace")
 
-            if proc.returncode == 0:
-                uuid = ""
-                qualities = []
-                for line in out.split("\n"):
-                    m = re.search(r"UUID:\s*([a-f0-9-]+)", line)
-                    if m:
-                        uuid = m.group(1)
-                    m = re.search(r"可用流:\s*(.+)", line)
-                    if m:
-                        for q in ["360p", "480p", "720p", "1080p"]:
-                            if q in line:
-                                qualities.append(q)
+            uuid = ""
+            for line in out.split("\n"):
+                m = re.search(r"UUID:\s*([a-f0-9-]+)", line)
+                if m:
+                    uuid = m.group(1)
 
-                if uuid:
-                    dvd_id = ""
-                    m = re.search(r"/([a-z]+-\d+)", missav_url)
-                    if m:
-                        dvd_id = m.group(1)
-                    result = {
-                        "uuid": uuid,
-                        "qualities": qualities,
-                        "dvd_id": dvd_id,
-                        "url": missav_url,
-                    }
-                    local_ok = True
+            if uuid:
+                qualities = ["360p", "480p", "720p", "1080p"]
+                dvd_id = ""
+                m = re.search(r"/([a-z]+-\d+)", missav_url)
+                if m:
+                    dvd_id = m.group(1)
+                hls_url = f"https://surrit.com/{uuid}/720p/video.m3u8"
+                result = {
+                    "uuid": uuid,
+                    "qualities": qualities,
+                    "dvd_id": dvd_id,
+                    "url": missav_url,
+                    "hls_url": hls_url,
+                    "title": dvd_id or uuid,
+                }
+                local_ok = True
+                logger.info(f"MissAV 解析成功: {uuid}")
         except Exception as e:
             logger.info(f"MissAV 本地解析失败: {e}")
 

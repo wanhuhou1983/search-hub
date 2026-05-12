@@ -413,14 +413,13 @@ def check_icloud() -> dict:
 def main():
     use_json = "--json" in sys.argv
 
-    checks = [
-        check_baidu(),
-        check_p115(),
-        check_quark(),
-        check_aliyun(),
-        check_googledrive(),
-        check_icloud(),
-    ]
+    checks = []
+    for fn in [check_baidu, check_p115, check_quark, check_aliyun, check_googledrive, check_icloud]:
+        try:
+            checks.append(fn())
+        except Exception as e:
+            name = fn.__name__.replace("check_", "").replace("_", " ").title()
+            checks.append({"name": name, "status": "❌ 异常", "detail": str(e)[:200]})
 
     if use_json:
         print(json.dumps(checks, ensure_ascii=False, indent=2))

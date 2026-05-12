@@ -1,15 +1,20 @@
-version: "3.9"
-
 services:
   search-hub:
     build: .
     container_name: search-hub
     restart: unless-stopped
     ports:
-      - "18080:18080"
+      - "18081:18081"
     environment:
       - HOST=0.0.0.0
-      - PORT=18080
-    # 如果需要持久化下载文件，映射下载目录
-    # volumes:
-    #   - ./downloads:/root/Downloads
+      - PORT=18081
+    volumes:
+      - /home/linhu/Downloads:/root/Downloads
+      # 凭据文件目录：挂载 .workbuddy 让容器能读写 cookie/token 文件
+      - /home/linhu/.workbuddy:/root/.workbuddy
+      # 代码目录覆盖：修改 main.py/index.html 后无需重建镜像，restart 即可生效
+      - /home/linhu/search-hub/main.py:/app/main.py
+      - /home/linhu/search-hub/index.html:/app/index.html
+      - /home/linhu/search-hub/config.py:/app/config.py
+      - /home/linhu/search-hub/handlers:/app/handlers
+      - /home/linhu/search-hub/scripts/token_check.py:/app/scripts/token_check.py

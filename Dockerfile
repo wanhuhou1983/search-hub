@@ -1,40 +1,30 @@
-# ============================================================
-# 统一搜索中心 — Docker 镜像
-# ============================================================
-# 构建：
-#   docker build -t search-hub .
-#
-# 运行：
-#   docker run -d --name search-hub -p 18080:18080 search-hub
-#
-# 自定义端口：
-#   docker run -d --name search-hub -p 19080:19080 -e PORT=19080 search-hub
-# ============================================================
-
 FROM python:3.13-slim
 
-LABEL description="统一搜索中心（网盘搜索 + 视频下载）"
+LABEL description="search-hub"
 LABEL maintainer="UHUH"
 
-# 避免 Python 输出缓冲
 ENV PYTHONUNBUFFERED=1
 ENV HOST=0.0.0.0
-ENV PORT=18080
+ENV PORT=18081
 
 WORKDIR /app
 
-# 安装依赖
+# 安装 ffmpeg, curl
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl && rm -rf /var/lib/apt/lists/*
+
+# 安装 yt-dlp
+RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod a+rx /usr/local/bin/yt-dlp
+
+# 安装 Python 依赖
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 复制代码
 COPY . .
 
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:$PORT/api/sources')" || exit 1
+EXPOSE 18081
 
-EXPOSE ${PORT}
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD curl -f http://localhost:18081/api/sources || exit 1
 
 ENTRYPOINT ["python", "run.py"]
 CMD []
